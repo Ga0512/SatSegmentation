@@ -1,0 +1,23 @@
+# config.yaml
+paths:
+  images_dir: "./data/Images"
+  labels_dir: "./data/Labels"
+  csv_validation: "./output/Validacao_seg_unet_1024x1024.csv"
+  checkpoint_path: "./output/"
+  best_model_path: "./output/best_model_unet.pth"
+  memmap_dir: "./output/memmap"
+
+dataset:
+  img_size: [1024, 1024]
+  crop_size: 512
+  num_bands: 11
+  num_classes: 19
+  val_size: 0.25
+  num_cores: 4
+
+training:
+  epochs: 101
+  patience: 30
+  learning_rate: 0.00005  # 5e-5
+  batch_size: 8
+  grad_accum: 2
