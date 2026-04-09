@@ -1,7 +1,7 @@
 # config.yaml
 paths:
-  images_dir: "./data/Images"
-  labels_dir: "./data/Labels"
+  images_dir: "./data/Images_2"
+  labels_dir: "./data/Labels_2"
   csv_validation: "./output/Validacao_seg_unet_1024x1024.csv"
   checkpoint_path: "./output/"
   best_model_path: "./output/best_model_unet.pth"
@@ -16,8 +16,8 @@ dataset:
   num_cores: 4
 
 training:
-  epochs: 101
-  patience: 30
+  epochs: 25
+  patience: 10
   learning_rate: 0.00005  # 5e-5
   batch_size: 8
   grad_accum: 2

@@ -4,7 +4,22 @@ Framework simplificado para segmentação de imagens de satélite usando **Prith
 
 ## 🚀 Setup Rápido (Windows)
 
-1. **Dependências:** Instale o [GDAL wheel](https://wheelhouse.openquake.org/v3/windows/py310/) e o PyTorch:
+```powershell
+https://github.com/Ga0512/SatSegmentation.git
+cd SatSegmentation
+```
+
+1. **Dependências:** 
+
+```powershell
+python -m venv venv
+venv/scripts/activate
+python.exe -m pip install --upgrade pip
+python -m src.fix_terratorch   
+```
+
+
+Instale o [GDAL wheel](https://wheelhouse.openquake.org/v3/windows/py310/) e o PyTorch:
 ```powershell
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 pip install -r requirements.txt

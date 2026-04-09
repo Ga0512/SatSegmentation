@@ -2,6 +2,61 @@ import torch
 import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
+import matplotlib.pyplot as plt
+import os
+
+def save_clean_plots(history, metrics_dir):
+    """Gera e salva gráficos limpos para cada métrica monitorada."""
+    # Usando um estilo limpo nativo do matplotlib
+    plt.style.use('seaborn-v0_8-whitegrid')
+    
+    epochs = history['epoch']
+    
+    plots_config = [
+        ('loss.png', 'Evolução da Loss', 'Loss', [
+            (history['train_loss'], 'Train Loss', '#1f77b4'), 
+            (history['val_loss'], 'Val Loss', '#ff7f0e')
+        ]),
+        ('accuracy_miou.png', 'Métricas de Validação (Acc & mIoU)', 'Score', [
+            (history['val_acc'], 'Acurácia', '#2ca02c'), 
+            (history['val_miou'], 'mIoU', '#d62728')
+        ]),
+        ('learning_rate.png', 'Learning Rate por Época', 'LR', [
+            (history['lr'], 'Learning Rate', '#9467bd')
+        ]),
+        ('tempo_epoca.png', 'Tempo de Execução por Época', 'Segundos', [
+            (history['time'], 'Tempo (s)', '#8c564b')
+        ]),
+        ('uso_gpu.png', 'Pico de Uso de Memória da GPU', 'Gigabytes (GB)', [
+            (history['gpu_mem'], 'Memória GPU (GB)', '#e377c2')
+        ])
+    ]
+
+    for filename, title, ylabel, lines in plots_config:
+        fig, ax = plt.subplots(figsize=(8, 5))
+        
+        for data, label, color in lines:
+            ax.plot(epochs, data, label=label, color=color, linewidth=2, marker='o', markersize=4)
+            
+        ax.set_title(title, fontsize=14, pad=15)
+        ax.set_xlabel('Épocas', fontsize=12)
+        ax.set_ylabel(ylabel, fontsize=12)
+        
+        # Ajustes para deixar o gráfico mais "limpo" (sem poluição)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.grid(True, linestyle='--', alpha=0.6)
+        
+        # Força o eixo X a mostrar apenas números inteiros (épocas)
+        ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+        
+        ax.legend(frameon=True, fancybox=True, shadow=False)
+        plt.tight_layout()
+        
+        save_path = os.path.join(metrics_dir, filename)
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.close(fig)
+
 
 class FocalLoss(nn.Module):
     def __init__(self, gamma=2.0, alpha=None, reduction='mean'):

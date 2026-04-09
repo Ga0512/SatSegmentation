@@ -1,7 +1,7 @@
 # config.yaml
 paths:
-  images_dir: "./data/Images"
-  labels_dir: "./data/Labels"
+  images_dir: "./data/Images_2"
+  labels_dir: "./data/Labels_2"
   memmap_dir: "./memmap_output"
   save_model_path: "best_prithvi_11bands.pth"
 
@@ -10,7 +10,7 @@ dataset:
   crop_size: 512
   num_bands: 11
   num_classes: 19
-  val_size: 0.25
+  val_size: 0.5
   num_cores: 4
 
 training:
