@@ -5,7 +5,7 @@ Framework simplificado para segmentação de imagens de satélite usando **Prith
 ## 🚀 Setup Rápido (Windows)
 
 ```powershell
-https://github.com/Ga0512/SatSegmentation.git
+git clone https://github.com/Ga0512/SatSegmentation.git
 cd SatSegmentation
 ```
 
