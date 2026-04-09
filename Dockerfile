@@ -19,7 +19,7 @@ RUN ln -s /usr/bin/python3 /usr/bin/python
 WORKDIR /app
 
 # copia projeto
-COPY . .
+COPY requirements.txt .
 
 # pip upgrade
 RUN pip install --upgrade pip
@@ -29,9 +29,6 @@ RUN pip install torch torchvision torchaudio --index-url https://download.pytorc
 
 # requirements
 RUN pip install -r requirements.txt
-
-# fix terratorch
-RUN python -m src.fix_terratorch
 
 # variável do rasterio
 ENV PROJ_LIB=/usr/local/lib/python3.10/dist-packages/rasterio/proj_data
