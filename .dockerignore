@@ -1,0 +1,7 @@
+venv/
+data/
+memmap_output/
+output/
+.gitignore
+metrics_prithvi/
+metrics_unet/

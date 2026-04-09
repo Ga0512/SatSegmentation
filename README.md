@@ -2,7 +2,7 @@
 
 Framework simplificado para segmentação de imagens de satélite usando **Prithvi (IBM/NASA)** e **U-Net**.
 
-## 🚀 Setup Rápido (Windows)
+## 🚀 Setup Rápido Windows
 
 ```powershell
 git clone https://github.com/Ga0512/SatSegmentation.git
@@ -29,6 +29,79 @@ pip install -r requirements.txt
 ```powershell
 $env:PROJ_LIB = "$pwd\venv\Lib\site-packages\rasterio\proj_data"
 ```
+
+Aqui está o seu trecho formatado com uma estrutura mais limpa, profissional e fácil de seguir. Organizei os comandos para que o fluxo de instalação e execução faça sentido imediato para quem estiver lendo o seu `README.md`.
+
+---
+
+## 🚀 Setup Rápido: Docker Container
+
+Siga os passos abaixo para preparar o ambiente e colocar o container para rodar com suporte a GPU.
+
+### 🐳 1. Pré-requisitos
+Antes de começar, certifique-se de ter instalado:
+* **Docker**
+* **NVIDIA Container Toolkit** (Essencial para habilitar o uso da GPU dentro do Docker)
+
+---
+
+### 🛠️ 2. Instalação (Windows + WSL ou Linux)
+Execute os comandos abaixo para instalar o toolkit da NVIDIA e reiniciar o serviço do Docker:
+
+```bash
+# Atualiza os repositórios e instala o toolkit
+sudo apt-get update
+sudo apt-get install -y nvidia-container-toolkit
+
+# Reinicia o Docker para aplicar as mudanças
+sudo systemctl restart docker
+```
+
+**Teste a instalação:**
+Verifique se o Docker consegue acessar sua GPU com o comando:
+```bash
+docker run --rm --gpus all nvidia/cuda:12.1.1-base-ubuntu22.04 nvidia-smi
+```
+
+---
+
+### 📦 3. Build e Execução
+Na raiz do projeto, execute os comandos para construir a imagem e subir o container:
+
+**Build da imagem:**
+```bash
+docker build -t satseg .
+```
+
+**Rodar o container:**
+> **Nota:** O comando abaixo mapeia sua pasta atual para dentro do container e habilita todas as GPUs.
+```bash
+docker run -it --gpus all -v ${PWD}:/app satseg
+```
+
+---
+
+### 🧪 4. Treinamento e Ajustes
+Dentro do container, primeiro aplique o fix necessário e depois escolha o modelo para treinar:
+
+**Ajuste inicial:**
+```bash
+python -m src.fix_terratorch
+```
+
+**Comandos de Treinamento:**
+```powershell
+# Prithvi (Geospatial Foundation Model)
+python -m scripts.prithvi.train_prithvi --config config/prithvi.yaml
+
+# U-Net (Clássica)
+python -m scripts.unet.train_unet --config config/unet.yaml
+```
+
+---
+
+### 💡 Dica rápida
+Se estiver usando **Windows (PowerShell)**, o comando `${PWD}` funciona perfeitamente para montar o volume. Se estiver no **CMD**, utilize `%cd%`. No **Linux**, use `$(pwd)`.
 
 ---
 

@@ -4,7 +4,10 @@ import sys
 def apply_terratorch_patch():
     # Detecta o caminho do site-packages no seu venv ativo
     # Isso evita problemas de caminhos absolutos (C: vs D:)
-    site_packages = [p for p in sys.path if 'site-packages' in p and 'venv' in p]
+    site_packages = [
+        p for p in sys.path 
+        if 'site-packages' in p or 'dist-packages' in p
+    ]
     
     if not site_packages:
         print("❌ Erro: Não consegui encontrar a pasta 'site-packages' do venv.")
