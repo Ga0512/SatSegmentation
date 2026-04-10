@@ -29,6 +29,7 @@ RUN pip install torch torchvision torchaudio --index-url https://download.pytorc
 
 # requirements
 RUN pip install -r requirements.txt
+RUN pip install numpy==1.26.4
 
 # variável do rasterio
 ENV PROJ_LIB=/usr/local/lib/python3.10/dist-packages/rasterio/proj_data

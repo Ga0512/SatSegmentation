@@ -1,5 +1,4 @@
 import os
-os.environ["PROJ_DATA"] = r"..\venv\Lib\site-packages\rasterio\proj_data"
 import time
 import torch
 import numpy as np
@@ -13,7 +12,7 @@ NUM_BANDS = 11
 CROP_SIZE = 512
 BATCH_SIZE = 32
 MODEL_PATH = './model/prithvi_production_fp16.pt'
-INPUT_DIR = '../new/data/Images'
+INPUT_DIR = './data/Images_2'
 OUTPUT_DIR = './predicoes'
 
 stats = np.load('./memmap_output/stats.npz')
@@ -37,7 +36,7 @@ def run_inference():
     all_info = []    # (img_idx, y, x, cy, cx)
 
     for img_idx, tif_path in enumerate(tifs):
-        ds = gdal.Open(str(tif_path))
+        ds = gdal.Open(str(tif_path), gdal.GA_ReadOnly)
         img_full = ds.ReadAsArray()
         _, H, W = img_full.shape
         image_meta.append((tif_path, H, W, ds.GetGeoTransform(), ds.GetProjection()))

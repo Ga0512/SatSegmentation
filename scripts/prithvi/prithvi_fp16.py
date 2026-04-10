@@ -1,9 +1,7 @@
-import os
 import torch
 from src.model import Prithvi11BandsModel
 
 # --- CONFIGURAÇÕES ---
-os.environ["PROJ_DATA"] = r"..\venv\Lib\site-packages\rasterio\proj_data"
 MODEL_PATH = './model/best_prithvi_11bands.pth'
 OUTPUT_FP16_PATH = './model/best_prithvi_11bands_fp16.pth'
 OUTPUT_STANDALONE_PATH = './model/prithvi_production_fp16.pt' # TorchScript
@@ -15,8 +13,15 @@ def save_right_and_complete():
     print("1. Inicializando modelo em FP32...")
     model = Prithvi11BandsModel(NUM_CLASSES, NUM_BANDS, pretrained=False)
     
-    # Carrega os pesos originais
-    model.load_state_dict(torch.load(MODEL_PATH, map_location='cpu'))
+    ckpt = torch.load(MODEL_PATH, map_location='cpu')
+
+    # suporta tanto checkpoint completo quanto state_dict puro
+    if "model_state_dict" in ckpt:
+        state_dict = ckpt["model_state_dict"]
+    else:
+        state_dict = ckpt
+
+    model.load_state_dict(state_dict)
     model.to(DEVICE)
     model.eval()
 

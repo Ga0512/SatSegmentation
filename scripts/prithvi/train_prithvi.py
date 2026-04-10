@@ -8,7 +8,6 @@ import torch.optim as optim
 import logging
 import numpy as np
 from tqdm import tqdm
-from osgeo import gdal
 from torch.utils.data import DataLoader, Subset
 from sklearn.model_selection import train_test_split
 import kornia.augmentation as K
@@ -21,7 +20,6 @@ from src.metrics import save_clean_plots
 
 # Configuração básica de logging
 logging.basicConfig(level=logging.INFO)
-gdal.UseExceptions()
 
 def train(config):
     # 1. CARREGANDO CONFIGURAÇÕES
