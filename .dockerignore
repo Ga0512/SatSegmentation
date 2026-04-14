@@ -5,3 +5,4 @@ output/
 .gitignore
 metrics_prithvi/
 metrics_unet/
+*.pth
