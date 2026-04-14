@@ -109,37 +109,74 @@ class AttentionResUNet(nn.Module):
         return out
 
 
-
 class Prithvi11BandsModel(nn.Module):
     '''
-    Modelo Prithvi,Nome Técnico (ViT),Total de Camadas,SelectIndices (Sugestão),Embed Dim
-    Prithvi-100M,ViT-Base,12,"[2, 5, 8, 11]",768
-    Prithvi-300M,ViT-Large,24,"[5, 11, 17, 23]",1024
-    Prithvi-600M,ViT-Huge,32,"[7, 15, 23, 31]",1280
+    Modelo Prithvi, Nome Técnico (ViT), Total de Camadas, SelectIndices, Embed Dim
+    Prithvi-100M, ViT-Base, 12, "[2, 5, 8, 11]", 768
+    Prithvi-300M, ViT-Large, 24, "[5, 11, 17, 23]", 1024
+    Prithvi-600M, ViT-Huge, 32, "[7, 15, 23, 31]", 1280
     ''' 
-    def __init__(self, num_classes, num_bands, pretrained=True):
+    def __init__(self, num_classes, num_bands=11, pretrained=True):
         super().__init__()
         factory = EncoderDecoderFactory()
         self.base = factory.build_model(
-            task="segmentation", backbone="prithvi_eo_v2_tiny_tl", 
-            backbone_pretrained=pretrained, backbone_in_chans=6, backbone_num_frames=1,
-            decoder="UperNetDecoder", decoder_channels=256, num_classes=num_classes,
+            task="segmentation", 
+            backbone="prithvi_eo_v2_100_tl", 
+            backbone_pretrained=pretrained, 
+            backbone_in_chans=6, 
+            backbone_num_frames=1,
+            decoder="UperNetDecoder", 
+            decoder_channels=256, 
+            num_classes=num_classes,
             necks=[{"name": "SelectIndices", "indices": [2, 5, 8, 11]}, {"name": "ReshapeTokensToImage"}]
         )
+        
         old_proj = self.base.encoder.patch_embed.proj
-        self.new_proj = nn.Conv3d(num_bands, old_proj.out_channels, kernel_size=old_proj.kernel_size, stride=old_proj.stride)
+        
+        # Cria a nova convolução 3D com o novo número de bandas
+        self.new_proj = nn.Conv3d(
+            in_channels=num_bands, 
+            out_channels=old_proj.out_channels, 
+            kernel_size=old_proj.kernel_size, 
+            stride=old_proj.stride,
+            padding=old_proj.padding, # Boa prática incluir padding se houver
+            bias=(old_proj.bias is not None)
+        )
+        
         if pretrained:
             with torch.no_grad():
-                self.new_proj.weight[:, :4, :, :, :] = old_proj.weight[:, :4, :, :, :]
-                mean_weight = old_proj.weight.mean(dim=1, keepdim=True)
-                self.new_proj.weight[:, 4:, :, :, :] = mean_weight
+                # 1. Copia os 6 canais originais (HLS)
+                n_original_bands = old_proj.in_channels # que é 6
+                self.new_proj.weight[:, :n_original_bands, :, :, :] = old_proj.weight.clone()
                 
+                # 2. Calcula a média dos pesos originais ao longo da dimensão dos canais
+                mean_weight = old_proj.weight.mean(dim=1, keepdim=True)
+                
+                # 3. Preenche as bandas extras (da 7 até a 11) com a média expandida
+                extras = num_bands - n_original_bands
+                if extras > 0:
+                    self.new_proj.weight[:, n_original_bands:, :, :, :] = mean_weight.expand(-1, extras, -1, -1, -1)
+                
+                # 4. Copia o bias (Viés) se existir
+                if old_proj.bias is not None:
+                    self.new_proj.bias.copy_(old_proj.bias)
+                
+        # Substitui a camada no modelo base
         self.base.encoder.patch_embed.proj = self.new_proj
 
     def forward(self, x):
-        if x.dim() == 4: x = x.unsqueeze(2)
+        # O Prithvi espera entrada 5D: (Batch, Channels, Time, Height, Width)
+        if x.dim() == 4: 
+            x = x.unsqueeze(2) # Adiciona a dimensão temporal (T=1)
+            
+        # Dependendo da versão do TerraTorch, o retorno pode ser um dicionário ou o tensor direto.
         res = self.base(x)
-        out = res.output
+        
+        # Se 'res' for um objeto customizado ou dicionário com atributo 'output'
+        out = res.output if hasattr(res, 'output') else res
+        
+        # Garante que o output tenha o mesmo tamanho espacial da entrada (H, W)
         if out.shape[-2:] != x.shape[-2:]:
             out = F.interpolate(out, size=x.shape[-2:], mode='bilinear', align_corners=False)
+            
         return out
