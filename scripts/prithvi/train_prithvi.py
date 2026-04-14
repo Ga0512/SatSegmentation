@@ -36,6 +36,9 @@ def train(config):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     scaler = torch.amp.GradScaler('cuda')
 
+    if torch.cuda.is_available():
+        torch.backends.cudnn.benchmark = True
+
     logging.info(f"Usando o dispositivo: {device}")
 
     # 2. PREPARAÇÃO DOS DADOS
@@ -60,11 +63,20 @@ def train(config):
         pin_memory=True, persistent_workers=True, prefetch_factor=2
     )
     
-    val_loader = DataLoader(Subset(dataset, val_idx), batch_size=tr_cfg['batch_size'], num_workers=ds_cfg['num_cores'])
+    val_loader = DataLoader(
+        Subset(dataset, val_idx),
+        batch_size=tr_cfg['batch_size'],
+        num_workers=ds_cfg['num_cores'],
+        pin_memory=True,         
+        persistent_workers=True, 
+        prefetch_factor=2       
+    )
+
 
     # 3. INICIALIZAÇÃO DO MODELO E MÉTRICAS
     model = Prithvi11BandsModel(ds_cfg['num_classes'], ds_cfg['num_bands']).to(device)
     optimizer = optim.AdamW(model.parameters(), lr=tr_cfg['learning_rate'], weight_decay=tr_cfg['weight_decay'])
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=tr_cfg['epochs'])
     criterion = nn.CrossEntropyLoss(ignore_index=0)
 
     metric_miou = JaccardIndex(task="multiclass", num_classes=ds_cfg['num_classes'], ignore_index=0).to(device)
@@ -78,6 +90,9 @@ def train(config):
     # Dicionário para armazenar o histórico
     history = {'epoch': [], 'train_loss': [], 'val_loss': [], 'val_miou': [], 'val_acc': [], 'lr': [], 'time': [], 'gpu_mem': []}
 
+    device_means = dataset.means.to(device, non_blocking=True)
+    device_stds = dataset.stds.to(device, non_blocking=True)
+                                  
     try:
         for epoch in range(tr_cfg['epochs']):
             start_time = time.time()
@@ -90,8 +105,16 @@ def train(config):
             pbar = tqdm(train_loader, desc=f"Época {epoch+1}")
             
             for x, y in pbar:
-                x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
-                x, y = aug(x, y)
+                x = x.to(device, non_blocking=True)
+                y = y.to(device, non_blocking=True)
+                
+                # 2. CÁLCULO NA GPU: Normalização ultra-rápida
+                # Isso acontece em paralelo para todos os pixels do batch
+                x = (x - device_means) / (device_stds + 1e-6)
+                
+                # 3. Augmentação (Kornia já roda na GPU)
+                x, y = aug(x, y.float())
+                y = y.squeeze(1).long()  # ← Kornia retorna (B,1,H,W) float
                 
                 with torch.amp.autocast('cuda'):
                     logits = model(x)
@@ -120,7 +143,10 @@ def train(config):
             
             with torch.no_grad(), torch.amp.autocast('cuda'):
                 for vx, vy in val_loader:
-                    vx, vy = vx.to(device, non_blocking=True), vy.to(device, non_blocking=True).long()
+                    vx = vx.to(device, non_blocking=True)
+                    vy = vy.to(device, non_blocking=True).long()
+                    
+                    vx = (vx - device_means) / (device_stds + 1e-6)
                     
                     v_logits = model(vx)
                     val_loss += criterion(v_logits, vy).item()
@@ -132,9 +158,10 @@ def train(config):
             final_acc = metric_acc.compute().item()
             avg_v_loss = val_loss / len(val_loader)
             
+            scheduler.step()
             # --- COLETA DE MÉTRICAS GERAIS ---
             epoch_time = time.time() - start_time
-            current_lr = optimizer.param_groups[0]['lr']
+            current_lr = scheduler.get_last_lr()[0]
             # Pega o pico de memória alocada na GPU em Gigabytes (GB)
             gpu_mem = torch.cuda.max_memory_allocated(device) / (1024**3) if torch.cuda.is_available() else 0.0
             

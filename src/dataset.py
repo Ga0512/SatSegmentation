@@ -58,25 +58,27 @@ class PrithviDataset(Dataset):
     def __init__(self, img_p, mask_p, num_samples, means, stds, num_bands, crop_size):
         self.img_p, self.mask_p = img_p, mask_p
         self.N = num_samples
+        # Convertemos para tensor aqui, mas eles ficam na RAM por enquanto
         self.means = torch.tensor(means, dtype=torch.float32).view(-1, 1, 1)
         self.stds = torch.tensor(stds, dtype=torch.float32).view(-1, 1, 1)
         self.imgs = None
         self.num_bands = num_bands
         self.crop_size = crop_size
+
     def __len__(self): return self.N
     
     def __getitem__(self, i):
         if self.imgs is None:
             self.imgs = np.memmap(self.img_p, dtype='uint16', mode='r', shape=(self.N, self.num_bands, self.crop_size, self.crop_size))
             self.masks = np.memmap(self.mask_p, dtype='int16', mode='r', shape=(self.N, self.crop_size, self.crop_size))
+        
+        # CPU apenas lê e converte o tipo. Zero cálculos aqui.
         img = torch.from_numpy(self.imgs[i].copy()).float()
         mask = torch.from_numpy(self.masks[i].copy()).long()
-        img = (img - self.means) / (self.stds + 1e-6)
+        
         return img, mask
 
-
 # 3. AUGMENTAÇÃO - GPU
-# ===========================================================================
 def build_gpu_augmenter():
     geometric = K.AugmentationSequential(
         K.RandomHorizontalFlip(p=0.5),
