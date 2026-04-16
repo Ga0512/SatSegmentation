@@ -77,12 +77,20 @@ def train(config):
         class_weights = np.load(weights_path)
     else:
         class_weights = compute_class_weights(train_mask_mm, train_list, ds_cfg['crop_size'], ds_cfg['num_classes'])
-    
-    class_weights[0] *= 0.1 # Reduz peso do background
-    
+
     scaler = torch.amp.GradScaler('cuda')
-    grad_accum = tr_cfg.get('grad_accum', 1) 
-    criterion = FocalDiceLoss(num_classes=ds_cfg['num_classes'], class_weights=class_weights).to(device)
+    grad_accum = tr_cfg.get('grad_accum', 1)
+    criterion = FocalDiceLoss(
+        num_classes=ds_cfg['num_classes'],
+        class_weights=class_weights,
+        ignore_index=0,
+    ).to(device)
+
+    # Estatísticas de normalização na GPU (substituem o pré-processamento que era no __getitem__)
+    device_pmins = train_dataset.pmins.to(device, non_blocking=True)
+    device_pmaxs = train_dataset.pmaxs.to(device, non_blocking=True)
+    device_means = train_dataset.means.to(device, non_blocking=True)
+    device_stds  = train_dataset.stds.to(device, non_blocking=True)
     optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=tr_cfg['learning_rate'])
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=tr_cfg['epochs'])
 
@@ -117,6 +125,10 @@ def train(config):
         for i, (imgs, masks) in enumerate(tqdm(train_loader, desc=f"Epoch {epoch+1}")):
             imgs, masks = imgs.to(device, non_blocking=True), masks.to(device, non_blocking=True)
 
+            # Normalização na GPU: clamp percentílico + z-score
+            imgs = torch.clamp(imgs, device_pmins, device_pmaxs)
+            imgs = (imgs - device_means) / (device_stds + 1e-6)
+
             with torch.no_grad():
                 masks = masks.unsqueeze(1)
                 imgs, masks = geometric(imgs, masks)
@@ -142,8 +154,11 @@ def train(config):
 
         with torch.no_grad():
             for imgs, masks in val_loader:
-                imgs = imgs.to(device, non_blocking=True).to(memory_format=torch.channels_last)
+                imgs  = imgs.to(device, non_blocking=True).to(memory_format=torch.channels_last)
                 masks = masks.to(device, non_blocking=True)
+
+                imgs = torch.clamp(imgs, device_pmins, device_pmaxs)
+                imgs = (imgs - device_means) / (device_stds + 1e-6)
 
                 with torch.amp.autocast(device_type='cuda'):
                     outputs = model(imgs)

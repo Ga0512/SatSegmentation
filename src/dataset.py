@@ -21,6 +21,7 @@ class SegDatasetMemmap(Dataset):
         self.crop_size = crop_size
         self.imgs = None
         self.masks = None
+        # Estatísticas expostas para uso no loop de treino (normalização na GPU)
         self.pmins = torch.tensor(pmins, dtype=torch.float32)[:, None, None]
         self.pmaxs = torch.tensor(pmaxs, dtype=torch.float32)[:, None, None]
         self.means = torch.tensor(means, dtype=torch.float32)[:, None, None]
@@ -39,18 +40,9 @@ class SegDatasetMemmap(Dataset):
     def __getitem__(self, idx):
         self._lazy_init()
 
-        # Use .copy() to ensure we aren't passing a direct pointer to the memmap file
-        img_np = np.array(self.imgs[idx], copy=True)
-        mask_np = np.array(self.masks[idx], copy=True)
+        img  = torch.as_tensor(np.array(self.imgs[idx]),  dtype=torch.float32)
+        mask = torch.as_tensor(np.array(self.masks[idx]), dtype=torch.long)
 
-        img = torch.from_numpy(img_np).to(torch.float32)
-        
-        # Rest of your normalization...
-        img = torch.clamp(img, self.pmins, self.pmaxs)
-        img = (img - self.means) / (self.stds + 1e-6)
-
-        mask = torch.from_numpy(mask_np).to(torch.long)
-        
         return img, mask
 
 
@@ -72,9 +64,8 @@ class PrithviDataset(Dataset):
             self.imgs = np.memmap(self.img_p, dtype='uint16', mode='r', shape=(self.N, self.num_bands, self.crop_size, self.crop_size))
             self.masks = np.memmap(self.mask_p, dtype='int16', mode='r', shape=(self.N, self.crop_size, self.crop_size))
         
-        # CPU apenas lê e converte o tipo. Zero cálculos aqui.
-        img = torch.from_numpy(self.imgs[i].copy()).float()
-        mask = torch.from_numpy(self.masks[i].copy()).long()
+        img  = torch.as_tensor(np.array(self.imgs[i]),  dtype=torch.float32)
+        mask = torch.as_tensor(np.array(self.masks[i]), dtype=torch.long)
         
         return img, mask
 

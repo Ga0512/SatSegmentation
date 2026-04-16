@@ -78,24 +78,27 @@ class FocalLoss(nn.Module):
         return loss.mean() if self.reduction == 'mean' else loss.sum()
 
 class FocalDiceLoss(nn.Module):
-    def __init__(self, num_classes, class_weights=None, gamma=1.0, dice_weight=1.0, focal_weight=1.0, eps=1e-6):
+    def __init__(self, num_classes, class_weights=None, gamma=1.0, dice_weight=1.0, focal_weight=1.0,
+                 ignore_index=0, eps=1e-6):
         """
-        Loss combinada: Focal + Dice para segmentação multi-classe
+        Loss combinada: Focal + Dice para segmentação multi-classe.
 
         Args:
-            num_classes: número de classes (int)
+            num_classes:   número de classes (int)
             class_weights: array numpy ou tensor com pesos por classe
-            gamma: parâmetro gamma da focal loss
-            dice_weight: peso da Dice Loss
-            focal_weight: peso da Focal Loss
-            eps: pequena constante para estabilidade numérica
+            gamma:         parâmetro gamma da focal loss
+            dice_weight:   peso da Dice Loss
+            focal_weight:  peso da Focal Loss
+            ignore_index:  índice de classe a ignorar (background); -1 desativa
+            eps:           constante para estabilidade numérica
         """
         super().__init__()
-        self.num_classes = num_classes
-        self.gamma = gamma
-        self.dice_weight = dice_weight
+        self.num_classes  = num_classes
+        self.gamma        = gamma
+        self.dice_weight  = dice_weight
         self.focal_weight = focal_weight
-        self.eps = eps
+        self.ignore_index = ignore_index
+        self.eps          = eps
 
         if class_weights is not None:
             self.register_buffer('class_weights', torch.tensor(class_weights, dtype=torch.float32))
@@ -105,38 +108,52 @@ class FocalDiceLoss(nn.Module):
     def forward(self, logits, targets):
         """
         Args:
-            logits: Tensor [B, C, H, W], saída bruta do modelo
+            logits:  Tensor [B, C, H, W], saída bruta do modelo
             targets: Tensor [B, H, W], índices das classes
         """
         B, C, H, W = logits.shape
         device = logits.device
 
-        # ==== FOCAL LOSS ====
-        log_probs = F.log_softmax(logits, dim=1)                  # [B,C,H,W]
-        probs     = torch.exp(log_probs)
-        targets_onehot = F.one_hot(targets, num_classes=C).permute(0,3,1,2).float()  # [B,C,H,W]
+        # Máscara de pixels válidos (exclui ignore_index)
+        if self.ignore_index >= 0:
+            valid_mask = (targets != self.ignore_index)          # [B,H,W]  bool
+        else:
+            valid_mask = torch.ones_like(targets, dtype=torch.bool)
 
-        pt = (probs * targets_onehot).sum(1)                     # [B,H,W]
+        # Clamp para evitar índice inválido no one_hot (substitui ignore por 0 temporariamente)
+        targets_clamped = targets.clone()
+        targets_clamped[~valid_mask] = 0
+
+        # ==== FOCAL LOSS ====
+        log_probs      = F.log_softmax(logits, dim=1)            # [B,C,H,W]
+        probs          = torch.exp(log_probs)
+        targets_onehot = F.one_hot(targets_clamped, num_classes=C).permute(0, 3, 1, 2).float()
+
+        pt     = (probs * targets_onehot).sum(1)                 # [B,H,W]
         log_pt = (log_probs * targets_onehot).sum(1)
 
-        alpha = self.class_weights.to(device)
-        alpha_factor = (targets_onehot * alpha.view(1,C,1,1)).sum(1)   # [B,H,W]
+        alpha        = self.class_weights.to(device)
+        alpha_factor = (targets_onehot * alpha.view(1, C, 1, 1)).sum(1)
 
-        focal_loss = - alpha_factor * ((1 - pt) ** self.gamma) * log_pt
-        focal_loss = focal_loss.mean()
+        focal_per_pixel = -alpha_factor * ((1 - pt) ** self.gamma) * log_pt  # [B,H,W]
+        focal_loss = (focal_per_pixel * valid_mask).sum() / (valid_mask.sum().clamp(min=1))
 
-        # ==== DICE LOSS ====
-        probs_flat = probs.reshape(B, C, -1)                     # [B,C,H*W]
-        targets_flat = targets_onehot.reshape(B, C, -1)          # [B,C,H*W]
+        # ==== DICE LOSS (apenas classes != ignore_index) ====
+        # Zera pixels ignorados antes de calcular interseção
+        valid_mask_c = valid_mask.unsqueeze(1).float()           # [B,1,H,W]
+        probs_masked = probs * valid_mask_c
+        tgt_masked   = targets_onehot * valid_mask_c
 
-        intersection = (probs_flat * targets_flat).sum(-1)
-        union = probs_flat.sum(-1) + targets_flat.sum(-1)
-        dice_loss = 1 - (2 * intersection + self.eps) / (union + self.eps)
-        dice_loss = dice_loss.mean()
+        # Exclui o canal do background do cômputo do Dice
+        start_c = 1 if self.ignore_index == 0 else 0
+        probs_flat = probs_masked[:, start_c:].reshape(B, C - start_c, -1)
+        tgt_flat   = tgt_masked[:,   start_c:].reshape(B, C - start_c, -1)
 
-        # ==== COMBINAÇÃO ====
-        loss = self.focal_weight * focal_loss + self.dice_weight * dice_loss
-        return loss
+        intersection = (probs_flat * tgt_flat).sum(-1)
+        union        = probs_flat.sum(-1) + tgt_flat.sum(-1)
+        dice_loss    = (1 - (2 * intersection + self.eps) / (union + self.eps)).mean()
+
+        return self.focal_weight * focal_loss + self.dice_weight * dice_loss
 
 def pixel_accuracy(preds, targets):
     return (preds == targets).sum().item() / targets.numel()

@@ -31,10 +31,11 @@ def compute_class_weights(mask_memmap_path, file_list, crop_size, num_classes):
     weights = np.log(1.0 / (freq + 1e-8))
     weights = np.clip(weights, 0.2, 10.0)
 
-    weights[0] *= 0.1
-    weights[17] *= 0.3
+    # Background (classe 0) já é tratado via ignore_index na loss; zeramos seu peso
+    # para não inflar artificialmente a perda de classes presentes.
+    weights[0] = 0.0
 
-    weights = weights / weights.mean()
+    weights = weights / (weights.sum() / (num_classes - 1))  # normaliza excluindo background
 
     return weights.astype(np.float32)
 

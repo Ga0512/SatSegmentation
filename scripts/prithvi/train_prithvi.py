@@ -18,6 +18,7 @@ from src.model import Prithvi11BandsModel
 from src.dataset import PrithviDataset, build_memmap_and_stats_prithvi
 from src.metrics import save_clean_plots
 from src.checkpoint_model import load_checkpoint, _empty_history, save_checkpoint
+from src.utils import compute_class_weights
 
 logging.basicConfig(level=logging.INFO)
 
@@ -62,12 +63,12 @@ def train(config, resume_path=None):
     train_loader = DataLoader(
         Subset(dataset, train_idx), batch_size=tr_cfg['batch_size'],
         shuffle=True, num_workers=ds_cfg['num_cores'],
-        pin_memory=True, persistent_workers=True, prefetch_factor=2
+        pin_memory=True, persistent_workers=True, prefetch_factor=ds_cfg['num_cores']
     )
     val_loader = DataLoader(
         Subset(dataset, val_idx), batch_size=tr_cfg['batch_size'],
         num_workers=ds_cfg['num_cores'],
-        pin_memory=True, persistent_workers=True, prefetch_factor=2
+        pin_memory=True, persistent_workers=True, prefetch_factor=ds_cfg['num_cores']
     )
 
     # ── 3. MODELO, OTIMIZADOR, SCHEDULER ─────────────────────────────────────
@@ -104,7 +105,14 @@ def train(config, resume_path=None):
     )
 
     #scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=tr_cfg['epochs'])
-    criterion = nn.CrossEntropyLoss(ignore_index=0)
+    class_weights = compute_class_weights(
+        mask_p, list(range(total_samples)),
+        ds_cfg['crop_size'], ds_cfg['num_classes']
+    )
+    criterion = nn.CrossEntropyLoss(
+        weight=torch.tensor(class_weights, dtype=torch.float32).to(device),
+        ignore_index=0
+    )
 
     metric_miou = JaccardIndex(
         task="multiclass", num_classes=ds_cfg['num_classes'], ignore_index=0
