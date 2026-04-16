@@ -1,141 +1,313 @@
-# 🛰️ Satellite Segmentation Framework
+# Satellite Segmentation Framework
 
-Framework simplificado para segmentação de imagens de satélite usando **Prithvi (IBM/NASA)** e **U-Net**.
+Framework de segmentação semântica para imagens de satélite multiespectrais (11 bandas), comparando duas arquiteturas:
 
-## 🚀 Setup Rápido Windows
+- **Prithvi**: Foundation model geoespacial IBM/NASA (ViT-Base, 100M parâmetros, pré-treinado em dados HLS)
+- **AttentionResUNet**: Encoder ResNet34 + decoder com attention gates espaciais e de canal
+
+Ambos os modelos operam sobre imagens 1024×1024 com 19 classes de uso e cobertura do solo.
+
+---
+
+## Sumário
+
+1. [Arquitetura do Projeto](#arquitetura-do-projeto)
+2. [Setup — Windows (venv)](#setup--windows-venv)
+3. [Setup — Docker](#setup--docker)
+4. [Pipeline de Dados](#pipeline-de-dados)
+5. [Treinamento](#treinamento)
+6. [Inferência](#inferência)
+7. [Exportação de Modelos](#exportação-de-modelos)
+8. [Estrutura de Diretórios](#estrutura-de-diretórios)
+9. [Configurações](#configurações)
+10. [Métricas e Monitoramento](#métricas-e-monitoramento)
+
+---
+
+## Arquitetura do Projeto
+
+```
+SatSegmentation/
+├── config/
+│   ├── prithvi.yaml          # Hiperparâmetros do Prithvi
+│   └── unet.yaml             # Hiperparâmetros do U-Net
+├── scripts/
+│   ├── prithvi/
+│   │   ├── train_prithvi.py  # Loop de treino Prithvi
+│   │   ├── predict_prithvi.py# Inferência em batch (TorchScript FP16)
+│   │   └── prithvi_fp16.py   # Conversão para FP16 + TorchScript
+│   └── unet/
+│       ├── train_unet.py     # Loop de treino U-Net
+│       ├── predict_unet.py   # Inferência ONNX com tiling e overlap
+│       └── export_onnx_unet.py
+├── src/
+│   ├── model.py              # AttentionResUNet + Prithvi11BandsModel
+│   ├── dataset.py            # SegDatasetMemmap, PrithviDataset, augmentação GPU
+│   ├── metrics.py            # FocalDiceLoss, mIoU, Dice, Kappa, plots
+│   ├── utils.py              # Pesos de classe, avaliação, file pairing
+│   ├── checkpoint_model.py   # Save/load de estado completo de treino
+│   ├── eval.py               # Loop de validação com CSV + confusion matrix
+│   └── fix_terratorch.py     # Patch de instalação do TerraTorch (one-time)
+├── data/
+│   ├── Images/               # GeoTIFFs de entrada (11 bandas)
+│   └── Labels/               # Máscaras de segmentação (*_mask.tif)
+└── memmap_output/            # Dados pré-processados (gerado automaticamente)
+```
+
+---
+
+## Setup — Windows (venv)
 
 ```powershell
 git clone https://github.com/Ga0512/SatSegmentation.git
 cd SatSegmentation
-```
 
-1. **Dependências:** 
-
-```powershell
 python -m venv venv
-venv/scripts/activate
-python.exe -m pip install --upgrade pip
-python -m src.fix_terratorch   
-```
+venv\Scripts\activate
 
-
-Instale o [GDAL wheel](https://wheelhouse.openquake.org/v3/windows/py310/) e o PyTorch:
-```powershell
+python -m pip install --upgrade pip
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 pip install -r requirements.txt
 ```
 
-2. **Variável de Ambiente:** Execute sempre antes de iniciar:
+**Patch obrigatório (executar uma única vez após instalar):**
+```powershell
+python -m src.fix_terratorch
+```
+
+**Variável de ambiente para rasterio (necessária em toda sessão):**
 ```powershell
 $env:PROJ_LIB = "$pwd\venv\Lib\site-packages\rasterio\proj_data"
 ```
 
-Aqui está o seu trecho formatado com uma estrutura mais limpa, profissional e fácil de seguir. Organizei os comandos para que o fluxo de instalação e execução faça sentido imediato para quem estiver lendo o seu `README.md`.
-
 ---
 
-## 🚀 Setup Rápido: Docker Container
+## Setup — Docker
 
-Siga os passos abaixo para preparar o ambiente e colocar o container para rodar com suporte a GPU.
+### Pré-requisitos
 
-### 🐳 1. Pré-requisitos
-Antes de começar, certifique-se de ter instalado:
-* **Docker**
-* **NVIDIA Container Toolkit** (Essencial para habilitar o uso da GPU dentro do Docker)
-
----
-
-### 🛠️ 2. Instalação (Windows + WSL ou Linux)
-Execute os comandos abaixo para instalar o toolkit da NVIDIA e reiniciar o serviço do Docker:
+- Docker
+- NVIDIA Container Toolkit (para acesso à GPU dentro do container)
 
 ```bash
-# Atualiza os repositórios e instala o toolkit
-sudo apt-get update
-sudo apt-get install -y nvidia-container-toolkit
-
-# Reinicia o Docker para aplicar as mudanças
+sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
 sudo systemctl restart docker
-```
 
-**Teste a instalação:**
-Verifique se o Docker consegue acessar sua GPU com o comando:
-```bash
+# Verificar acesso à GPU
 docker run --rm --gpus all nvidia/cuda:12.1.1-base-ubuntu22.04 nvidia-smi
 ```
 
----
+### Build e execução
 
-### 📦 3. Build e Execução
-Na raiz do projeto, execute os comandos para construir a imagem e subir o container:
-
-**Build da imagem:**
 ```bash
 docker build -t satseg .
-```
-
-**Rodar o container:**
-> **Nota:** O comando abaixo mapeia sua pasta atual para dentro do container e habilita todas as GPUs.
-```bash
 docker run -it --gpus all -v ${PWD}:/app satseg
 ```
 
----
-
-### 🧪 4. Treinamento e Ajustes
-Dentro do container, primeiro aplique o fix necessário e depois escolha o modelo para treinar:
-
-**Ajuste inicial:**
+Dentro do container:
 ```bash
 python -m src.fix_terratorch
 ```
 
-**Comandos de Treinamento:**
-```powershell
-# Prithvi (Geospatial Foundation Model)
+---
+
+## Pipeline de Dados
+
+O pipeline transforma GeoTIFFs brutos em arquivos memory-mapped binários (`.dat`) para carregamento eficiente durante o treino.
+
+### Fluxo
+
+```
+GeoTIFFs (./data/) → build_memmap_and_stats() → ./memmap_output/*.dat + stats.npz
+                                                              ↓
+                                               SegDatasetMemmap / PrithviDataset
+                                                              ↓
+                                               DataLoader (workers CPU, pin_memory)
+                                                              ↓
+                                               Normalização na GPU (clamp + z-score)
+                                                              ↓
+                                               Augmentação GPU (Kornia)
+```
+
+### Detalhes técnicos
+
+- Imagens armazenadas como `uint16` (2 bytes/pixel), máscaras como `int16`
+- Crops de 512×512 extraídos de forma não-sobreposta das imagens 1024×1024
+- Estatísticas por banda (percentis p2/p98, média, desvio padrão) calculadas uma única vez e salvas em `stats.npz`
+- **Normalização executada na GPU** (clamp percentílico + z-score por banda) — os workers de CPU fazem apenas leitura e cast de tipo
+- A construção do memmap é automática na primeira execução do treino; execuções subsequentes reutilizam os arquivos existentes
+
+---
+
+## Treinamento
+
+### Prithvi
+
+```bash
 python -m scripts.prithvi.train_prithvi --config config/prithvi.yaml
 
-# U-Net (Clássica)
+# Retomar de checkpoint
+python -m scripts.prithvi.train_prithvi --config config/prithvi.yaml --resume
+python -m scripts.prithvi.train_prithvi --config config/prithvi.yaml --resume path/to/checkpoint.pth
+```
+
+**Características do loop:**
+- Mixed precision (AMP FP16) com gradient clipping (`max_norm=1.0`)
+- Scheduler: Linear warmup (5 épocas, 1% → 100% do LR) + Cosine Annealing
+- Loss: `CrossEntropyLoss` com `class_weights` (log-inverso de frequência) e `ignore_index=0`
+- Métricas: `JaccardIndex` e `Accuracy` via TorchMetrics (ignoram background)
+- Checkpoint salvo quando `val_loss` melhora; early stopping com `patience=30`
+
+### AttentionResUNet
+
+```bash
 python -m scripts.unet.train_unet --config config/unet.yaml
+```
+
+**Características do loop:**
+- Mixed precision (AMP FP16) com gradient accumulation (effective batch = `batch_size × grad_accum`)
+- Scheduler: Cosine Annealing
+- Loss: `FocalDiceLoss` com `class_weights`, `ignore_index=0` — background excluído tanto da Focal quanto do Dice
+- Augmentação GPU via Kornia: flip, rotação 90°, brilho/contraste, affine, blur gaussiano
+- `torch.channels_last` no modelo para melhor throughput em GPUs com Tensor Cores
+
+### Pesos de classe
+
+Calculados automaticamente por `compute_class_weights()`:
+- Frequência inversa com suavização logarítmica: `w = log(1 / (freq + 1e-8))`
+- Clipping em `[0.2, 10.0]` para evitar pesos extremos
+- Background (classe 0) recebe peso `0.0` — tratado via `ignore_index` na loss
+- Normalizados para média 1.0 sobre as classes ativas
+
+---
+
+## Inferência
+
+### Prithvi (TorchScript FP16)
+
+```bash
+python -m scripts.prithvi.predict_prithvi
+```
+
+- Carrega modelo TorchScript em FP16 de `./model/prithvi_production_fp16.pt`
+- Processa múltiplas imagens em batch cross-image (sem recarregar o modelo entre arquivos)
+- Normalização z-score por banda na GPU antes da inferência
+- Saída: GeoTIFF com máscara de classes em `./predicoes/`
+
+### AttentionResUNet (ONNX Runtime)
+
+```bash
+python -m scripts.unet.predict_unet
+```
+
+- Inferência via ONNX Runtime com `CUDAExecutionProvider`
+- Tiling com overlap de 128px e média ponderada por mapa gaussiano centrado (elimina artefatos de borda)
+- Normalização clamp + z-score na GPU antes de cada batch
+- Saída: GeoTIFF comprimido (LZW, tiled) em `./Masks/`
+
+---
+
+## Exportação de Modelos
+
+### Prithvi → FP16 TorchScript
+
+```bash
+python -m scripts.prithvi.prithvi_fp16
+```
+
+Gera dois artefatos:
+- `./model/best_prithvi_11bands_fp16.pth` — state dict em FP16
+- `./model/prithvi_production_fp16.pt` — TorchScript standalone (sem dependência de `src/`)
+
+### AttentionResUNet → ONNX
+
+```bash
+python -m scripts.unet.export_onnx_unet
 ```
 
 ---
 
-### 💡 Dica rápida
-Se estiver usando **Windows (PowerShell)**, o comando `${PWD}` funciona perfeitamente para montar o volume. Se estiver no **CMD**, utilize `%cd%`. No **Linux**, use `$(pwd)`.
+## Estrutura de Diretórios
+
+| Diretório | Conteúdo |
+|---|---|
+| `./data/Images/` | GeoTIFFs de entrada (11 bandas, 1024×1024) |
+| `./data/Labels/` | Máscaras `*_mask.tif` (19 classes) |
+| `./memmap_output/` | `*.dat` + `stats.npz` (gerado automaticamente) |
+| `./model/` | Pesos Prithvi (`.pth`, FP16 `.pt`) |
+| `./output/` | Melhor checkpoint U-Net, CSV de validação, confusion matrix |
+| `./metrics_prithvi/` | Curvas de treino do Prithvi (PNG) |
+| `./metrics_unet/` | Curvas de treino do U-Net (PNG) |
+| `./predicoes/` | GeoTIFFs de saída da inferência Prithvi |
+| `./Masks/` | GeoTIFFs de saída da inferência U-Net |
 
 ---
 
-## 🛠️ Execução
+## Configurações
 
-O framework utiliza arquivos `.yaml` em `config/` para todos os parâmetros.
+### `config/prithvi.yaml`
 
-### 1. Treinamento
-```powershell
-# Prithvi (Geospatial Foundation Model)
-python -m scripts.prithvi.train_prithvi --config config/prithvi.yaml
+```yaml
+dataset:
+  img_size: [1024, 1024]
+  crop_size: 512
+  num_bands: 11
+  num_classes: 19
+  val_size: 0.20        # 80/20 split
+  num_cores: 4          # workers do DataLoader
 
-# U-Net (Clássica)
-python -m scripts.unet.train_unet --config config/unet.yaml
+training:
+  epochs: 60
+  patience: 30          # early stopping
+  learning_rate: 5e-5
+  batch_size: 8
+  weight_decay: 0.01
 ```
 
-### 2. Inferência e Otimização
-* **Prithvi FP16:** Use o script de precisão mista para inferência ultra rápida:
-  ```powershell
-  python -m scripts.prithvi.prithvi_fp16
-  ```
-* **Predição Simples:** `python -m scripts.prithvi.predict_prithvi`
-* **Exportação ONNX:** Converta a U-Net para produção:
-  ```powershell
-  python -m scripts.unet.export_onnx_unet
-  ```
+### `config/unet.yaml`
+
+```yaml
+dataset:
+  img_size: [1024, 1024]
+  crop_size: 512
+  num_bands: 11
+  num_classes: 19
+  val_size: 0.25        # 75/25 split
+  num_cores: 4
+
+training:
+  epochs: 25
+  patience: 10
+  learning_rate: 5e-5
+  batch_size: 8
+  grad_accum: 2         # effective batch = 16
+```
 
 ---
 
-## 📂 Estrutura Minimalista
+## Métricas e Monitoramento
 
-* **`config/`**: Hiperparâmetros (YAML).
-* **`scripts/`**: Entry points (Treino, Predição e Exportação).
-* **`src/`**: Core do framework (Modelos e DataLoaders).
+A cada época são registrados e plotados:
 
-## 📊 Métricas
-O progresso é validado via **mIoU**, curvas de **Loss** e exportação de máscaras comparativas para inspeção visual.
+| Métrica | Descrição |
+|---|---|
+| `train_loss` / `val_loss` | Loss média por época |
+| `val_miou` | mIoU excluindo background (classes 1–18) |
+| `val_acc` | Pixel accuracy excluindo background |
+| `lr` | Learning rate atual |
+| `time` | Tempo de execução por época (s) |
+| `gpu_mem` | Pico de memória GPU alocada (GB) |
+
+Gráficos salvos em `./metrics_prithvi/` e `./metrics_unet/` após cada época.
+
+Ao final do treino, `evaluate_model()` gera:
+- CSV com precision, recall, F1, IoU e Dice por classe
+- Confusion matrix em PNG
+- Kappa de Cohen e Weighted IoU globais
+
+### Notas de implementação
+
+- **`src/fix_terratorch.py`** deve ser executado uma vez após a instalação — corrige a constante `SENTINEL2_ALL_SOFTCON → SENTINEL2_ALL_MOCO` na biblioteca TerraTorch instalada
+- Todos os scripts são invocados como módulos (`python -m scripts.X.Y`), não diretamente
+- O Prithvi estende o patch embedding pré-treinado de 6 para 11 bandas: os 6 canais HLS originais são copiados diretamente e as 5 bandas extras são inicializadas com a média dos pesos originais
+- Não há testes unitários; a avaliação é integrada ao loop de treino e produz CSVs e plots automaticamente
