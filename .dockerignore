@@ -6,3 +6,4 @@ output/
 metrics_prithvi/
 metrics_unet/
 *.pth
+predicoes/

@@ -121,7 +121,7 @@ class Prithvi11BandsModel(nn.Module):
         factory = EncoderDecoderFactory()
         self.base = factory.build_model(
             task="segmentation", 
-            backbone="prithvi_eo_v2_100_tl", 
+            backbone="prithvi_eo_v2_tiny_tl", 
             backbone_pretrained=pretrained, 
             backbone_in_chans=6, 
             backbone_num_frames=1,
