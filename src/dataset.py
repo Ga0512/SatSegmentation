@@ -69,6 +69,7 @@ class PrithviDataset(Dataset):
         
         return img, mask
 
+
 # 3. AUGMENTAÇÃO - GPU
 def build_gpu_augmenter():
     geometric = K.AugmentationSequential(
@@ -251,4 +252,3 @@ def build_memmap_and_stats_prithvi(images_dir, labels_dir, memmap_dir, file_list
     np.savez(stats_path, means=means, stds=stds)
     imgs_mm.flush()
     return img_path, mask_path, means, stds
-

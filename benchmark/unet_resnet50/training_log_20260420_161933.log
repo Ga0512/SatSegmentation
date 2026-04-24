@@ -1,0 +1,49 @@
+2026-04-20 16:19:33,189 [INFO] Iniciando treinamento...
+2026-04-20 16:19:33,203 [INFO] [memmap] train: carregando dados existentes.
+2026-04-20 16:19:33,275 [INFO] [memmap] Construindo val (multi-band read)...
+2026-04-20 16:19:56,833 [INFO] [memmap] val pronto. Total samples: 40
+2026-04-20 16:19:56,903 [INFO] Dataset consistente: 160 amostras | 512x512
+2026-04-20 16:19:56,903 [INFO] Dataset consistente: 40 amostras | 512x512
+2026-04-20 16:25:20,491 [INFO] Época 1 Finalizada | ValLoss: 1.6562 | mIoU: 0.0254 | Tempo: 314.4s | GPU Mem: 6.60GB
+2026-04-20 16:28:41,198 [INFO] Época 2 Finalizada | ValLoss: 1.4620 | mIoU: 0.1234 | Tempo: 194.9s | GPU Mem: 6.77GB
+2026-04-20 16:32:19,524 [INFO] Época 3 Finalizada | ValLoss: 1.4446 | mIoU: 0.1232 | Tempo: 210.2s | GPU Mem: 6.77GB
+2026-04-20 16:35:36,945 [INFO] Época 4 Finalizada | ValLoss: 1.3997 | mIoU: 0.1548 | Tempo: 189.7s | GPU Mem: 6.77GB
+2026-04-20 16:39:18,340 [INFO] Época 5 Finalizada | ValLoss: 1.3028 | mIoU: 0.1844 | Tempo: 212.1s | GPU Mem: 6.77GB
+2026-04-20 16:43:01,175 [INFO] Época 6 Finalizada | ValLoss: 1.2761 | mIoU: 0.1928 | Tempo: 215.1s | GPU Mem: 6.77GB
+2026-04-20 16:46:41,554 [INFO] Época 7 Finalizada | ValLoss: 1.4549 | mIoU: 0.1175 | Tempo: 213.3s | GPU Mem: 6.77GB
+2026-04-20 16:49:55,051 [INFO] Época 8 Finalizada | ValLoss: 1.2791 | mIoU: 0.1779 | Tempo: 189.8s | GPU Mem: 6.77GB
+2026-04-20 16:53:30,846 [INFO] Época 9 Finalizada | ValLoss: 1.2915 | mIoU: 0.1802 | Tempo: 212.1s | GPU Mem: 6.77GB
+2026-04-20 16:57:10,953 [INFO] Época 10 Finalizada | ValLoss: 1.2543 | mIoU: 0.1795 | Tempo: 216.1s | GPU Mem: 6.77GB
+2026-04-20 17:00:50,733 [INFO] Época 11 Finalizada | ValLoss: 1.1734 | mIoU: 0.2261 | Tempo: 212.1s | GPU Mem: 6.77GB
+2026-04-20 17:04:08,548 [INFO] Época 12 Finalizada | ValLoss: 1.1725 | mIoU: 0.2247 | Tempo: 190.2s | GPU Mem: 6.77GB
+2026-04-20 17:07:48,314 [INFO] Época 13 Finalizada | ValLoss: 1.1715 | mIoU: 0.2309 | Tempo: 212.0s | GPU Mem: 6.77GB
+2026-04-20 17:11:30,781 [INFO] Época 14 Finalizada | ValLoss: 1.1358 | mIoU: 0.2422 | Tempo: 214.8s | GPU Mem: 6.77GB
+2026-04-20 17:15:08,362 [INFO] Época 15 Finalizada | ValLoss: 1.1655 | mIoU: 0.2299 | Tempo: 209.5s | GPU Mem: 6.77GB
+2026-04-20 17:18:23,088 [INFO] Época 16 Finalizada | ValLoss: 1.1392 | mIoU: 0.2472 | Tempo: 190.6s | GPU Mem: 6.77GB
+2026-04-20 17:21:59,945 [INFO] Época 17 Finalizada | ValLoss: 1.1490 | mIoU: 0.2201 | Tempo: 212.8s | GPU Mem: 6.77GB
+2026-04-20 17:25:48,109 [INFO] Época 18 Finalizada | ValLoss: 1.2857 | mIoU: 0.1859 | Tempo: 215.9s | GPU Mem: 6.77GB
+2026-04-20 17:29:24,217 [INFO] Época 19 Finalizada | ValLoss: 1.1320 | mIoU: 0.2256 | Tempo: 212.2s | GPU Mem: 6.77GB
+2026-04-20 17:32:41,832 [INFO] Época 20 Finalizada | ValLoss: 1.1549 | mIoU: 0.2309 | Tempo: 190.3s | GPU Mem: 6.77GB
+2026-04-20 17:36:18,008 [INFO] Época 21 Finalizada | ValLoss: 1.1153 | mIoU: 0.2524 | Tempo: 212.3s | GPU Mem: 6.77GB
+2026-04-20 17:40:00,053 [INFO] Época 22 Finalizada | ValLoss: 1.1708 | mIoU: 0.2097 | Tempo: 215.5s | GPU Mem: 6.77GB
+2026-04-20 17:43:35,192 [INFO] Época 23 Finalizada | ValLoss: 1.1832 | mIoU: 0.2205 | Tempo: 210.5s | GPU Mem: 6.77GB
+2026-04-20 17:46:49,845 [INFO] Época 24 Finalizada | ValLoss: 1.1277 | mIoU: 0.2435 | Tempo: 190.7s | GPU Mem: 6.77GB
+2026-04-20 17:50:27,226 [INFO] Época 25 Finalizada | ValLoss: 1.0856 | mIoU: 0.2796 | Tempo: 213.4s | GPU Mem: 6.77GB
+2026-04-20 17:54:09,859 [INFO] Época 26 Finalizada | ValLoss: 1.0924 | mIoU: 0.2636 | Tempo: 214.9s | GPU Mem: 6.77GB
+2026-04-20 17:57:46,123 [INFO] Época 27 Finalizada | ValLoss: 1.0899 | mIoU: 0.2516 | Tempo: 211.9s | GPU Mem: 6.77GB
+2026-04-20 18:01:00,349 [INFO] Época 28 Finalizada | ValLoss: 1.0815 | mIoU: 0.2644 | Tempo: 190.3s | GPU Mem: 6.77GB
+2026-04-20 18:04:49,638 [INFO] Época 29 Finalizada | ValLoss: 1.0828 | mIoU: 0.2803 | Tempo: 213.6s | GPU Mem: 6.77GB
+2026-04-20 18:08:28,632 [INFO] Época 30 Finalizada | ValLoss: 1.0734 | mIoU: 0.2622 | Tempo: 215.3s | GPU Mem: 6.77GB
+2026-04-20 18:12:06,997 [INFO] Época 31 Finalizada | ValLoss: 1.0548 | mIoU: 0.2779 | Tempo: 212.5s | GPU Mem: 6.77GB
+2026-04-20 18:15:25,323 [INFO] Época 32 Finalizada | ValLoss: 1.1069 | mIoU: 0.2433 | Tempo: 192.2s | GPU Mem: 6.77GB
+2026-04-20 18:19:03,397 [INFO] Época 33 Finalizada | ValLoss: 1.0581 | mIoU: 0.2833 | Tempo: 214.0s | GPU Mem: 6.77GB
+2026-04-20 18:22:44,468 [INFO] Época 34 Finalizada | ValLoss: 1.0477 | mIoU: 0.2835 | Tempo: 216.5s | GPU Mem: 6.77GB
+2026-04-20 18:26:24,998 [INFO] Época 35 Finalizada | ValLoss: 1.0545 | mIoU: 0.2686 | Tempo: 214.8s | GPU Mem: 6.77GB
+2026-04-20 18:29:40,844 [INFO] Época 36 Finalizada | ValLoss: 1.0409 | mIoU: 0.2910 | Tempo: 191.7s | GPU Mem: 6.77GB
+2026-04-20 18:33:21,366 [INFO] Época 37 Finalizada | ValLoss: 1.0500 | mIoU: 0.2609 | Tempo: 212.6s | GPU Mem: 6.77GB
+2026-04-20 18:37:01,093 [INFO] Época 38 Finalizada | ValLoss: 1.0421 | mIoU: 0.2789 | Tempo: 215.7s | GPU Mem: 6.77GB
+2026-04-20 18:40:40,648 [INFO] Época 39 Finalizada | ValLoss: 1.0379 | mIoU: 0.3005 | Tempo: 215.4s | GPU Mem: 6.77GB
+2026-04-20 18:43:59,873 [INFO] Época 40 Finalizada | ValLoss: 1.0694 | mIoU: 0.2580 | Tempo: 191.2s | GPU Mem: 6.77GB
+2026-04-20 18:47:42,826 [INFO] Época 41 Finalizada | ValLoss: 1.0542 | mIoU: 0.2817 | Tempo: 213.2s | GPU Mem: 6.77GB
+2026-04-20 18:51:23,536 [INFO] Época 42 Finalizada | ValLoss: 1.0556 | mIoU: 0.2760 | Tempo: 216.7s | GPU Mem: 6.77GB
+2026-04-20 18:54:57,099 [INFO] Época 43 Finalizada | ValLoss: 1.0345 | mIoU: 0.2779 | Tempo: 209.6s | GPU Mem: 6.77GB

@@ -70,7 +70,11 @@ def train(config):
     geometric, photometric = build_gpu_augmenter()
     
     # --- MODELO E OTIMIZADORES ---
-    model = AttentionResUNet(ds_cfg['num_bands'], ds_cfg['num_classes']).to(device)
+    model = AttentionResUNet(
+        ds_cfg['num_bands'],
+        ds_cfg['num_classes'],
+        model_size=config.get('model_size', 'resnet34'),
+    ).to(device)
     model = model.to(memory_format=torch.channels_last)
 
     if os.path.exists(weights_path):
@@ -202,8 +206,13 @@ def train(config):
         history['time'].append(epoch_duration)
         history['gpu_mem'].append(gpu_memory_gb)
         
+        metrics_dir = os.path.join(
+        os.path.dirname(paths.get('best_model_path', './')), 'metrics_unet'
+            )
+        os.makedirs(metrics_dir, exist_ok=True)
+        
         # Agora a função vai rodar sem KeyError processando todas as chaves exigidas
-        save_clean_plots(history, "./metrics_unet/")
+        save_clean_plots(history, metrics_dir)
 
         logging.info(f"Época {epoch+1} Finalizada | ValLoss: {avg_val_loss:.4f} | mIoU: {avg_miou:.4f} | Tempo: {epoch_duration:.1f}s | GPU Mem: {gpu_memory_gb:.2f}GB")
 

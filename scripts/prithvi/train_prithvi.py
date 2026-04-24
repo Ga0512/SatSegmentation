@@ -72,7 +72,11 @@ def train(config, resume_path=None):
     )
 
     # ── 3. MODELO, OTIMIZADOR, SCHEDULER ─────────────────────────────────────
-    model     = Prithvi11BandsModel(ds_cfg['num_classes'], ds_cfg['num_bands']).to(device)
+    model = Prithvi11BandsModel(
+        ds_cfg['num_classes'],
+        ds_cfg['num_bands'],
+        model_size=config.get('model_size', 'tiny'),
+    ).to(device)
     optimizer = optim.AdamW(model.parameters(),
                             lr=tr_cfg['learning_rate'],
                             weight_decay=tr_cfg['weight_decay'])

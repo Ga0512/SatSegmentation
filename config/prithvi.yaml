@@ -1,4 +1,4 @@
-# config.yaml
+# Prithvi Tiny — config de treinamento principal
 paths:
   images_dir: "./data/Images"
   labels_dir: "./data/Labels"
@@ -19,3 +19,5 @@ training:
   learning_rate: 0.00005  # 5e-5
   batch_size: 8
   weight_decay: 0.01
+
+model_size: tiny   # opções: tiny | 100m | 300m | 600m

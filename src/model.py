@@ -33,45 +33,50 @@ class AttentionGate(nn.Module):
         return x_channel + x
 
 
-def get_resnet_encoder(in_channels):
-    resnet = models.resnet34(weights=None)
-
-    old = resnet.conv1
-    resnet.conv1 = nn.Conv2d(in_channels, old.out_channels, 7, stride=2, padding=3, bias=False)
-
-    return resnet
+# (init_ch, enc1, enc2, enc3, enc4)
+_ENCODER_CH = {
+    'resnet34': (64,  64,  128,  256,   512),
+    'resnet50': (64, 256,  512, 1024,  2048),
+}
 
 
 class AttentionResUNet(nn.Module):
-    def __init__(self, in_channels, num_classes):
+    def __init__(self, in_channels, num_classes, model_size='resnet34'):
         super().__init__()
+        assert model_size in _ENCODER_CH, f"model_size deve ser um de: {list(_ENCODER_CH)}"
+        ci, e1, e2, e3, e4 = _ENCODER_CH[model_size]
 
-        enc = get_resnet_encoder(in_channels)
+        if model_size == 'resnet34':
+            enc = models.resnet34(weights=None)
+        else:
+            enc = models.resnet50(weights=None)
+
+        old = enc.conv1
+        enc.conv1 = nn.Conv2d(in_channels, old.out_channels, 7, stride=2, padding=3, bias=False)
 
         self.initial = nn.Sequential(enc.conv1, enc.bn1, enc.relu)
-        self.pool = enc.maxpool
+        self.pool    = enc.maxpool
+        self.enc1    = enc.layer1
+        self.enc2    = enc.layer2
+        self.enc3    = enc.layer3
+        self.enc4    = enc.layer4
 
-        self.enc1 = enc.layer1
-        self.enc2 = enc.layer2
-        self.enc3 = enc.layer3
-        self.enc4 = enc.layer4
+        self.up4  = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.att4 = AttentionGate(e4, e3, e3 // 2)
+        self.dec4 = self.block(e4 + e3, e3)
 
-        self.up4 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
-        self.att4 = AttentionGate(512,256,128)
-        self.dec4 = self.block(512+256,256)
+        self.up3  = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.att3 = AttentionGate(e3, e2, e2 // 2)
+        self.dec3 = self.block(e3 + e2, e2)
 
-        self.up3 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
-        self.att3 = AttentionGate(256,128,64)
-        self.dec3 = self.block(256+128,128)
+        self.up2  = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.att2 = AttentionGate(e2, e1, e1 // 2)
+        self.dec2 = self.block(e2 + e1, e1)
 
-        self.up2 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
-        self.att2 = AttentionGate(128,64,32)
-        self.dec2 = self.block(128+64,64)
+        self.up1  = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.dec1 = self.block(e1 + ci, 64)
 
-        self.up1 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
-        self.dec1 = self.block(64+64,64)
-
-        self.final = nn.Conv2d(64,num_classes,1)
+        self.final = nn.Conv2d(64, num_classes, 1)
 
 
     def block(self,i,o):
@@ -109,26 +114,38 @@ class AttentionResUNet(nn.Module):
         return out
 
 
+# model_size → (backbone_name, select_indices, decoder_channels)
+_PRITHVI_SIZES = {
+    'tiny': ('prithvi_eo_v2_tiny_tl', [2, 5, 8, 11],  256),
+    '100m': ('prithvi_eo_v2_100_tl',  [2, 5, 8, 11],  256),
+    '300m': ('prithvi_eo_v2_300_tl',  [5, 11, 17, 23], 256),
+    '600m': ('prithvi_eo_v2_600_tl',  [7, 15, 23, 31], 256),
+}
+
+
 class Prithvi11BandsModel(nn.Module):
     '''
-    Modelo Prithvi, Nome Técnico (ViT), Total de Camadas, SelectIndices, Embed Dim
-    Prithvi-100M, ViT-Base, 12, "[2, 5, 8, 11]", 768
-    Prithvi-300M, ViT-Large, 24, "[5, 11, 17, 23]", 1024
-    Prithvi-600M, ViT-Huge, 32, "[7, 15, 23, 31]", 1280
-    ''' 
-    def __init__(self, num_classes, num_bands=11, pretrained=True):
+    model_size  backbone               blocos  embed
+    tiny        prithvi_eo_v2_tiny_tl  12      192
+    100m        prithvi_eo_v2_100_tl   12      768
+    300m        prithvi_eo_v2_300_tl   24      1024
+    600m        prithvi_eo_v2_600_tl   32      1280
+    '''
+    def __init__(self, num_classes, num_bands=11, pretrained=True, model_size='tiny'):
         super().__init__()
+        assert model_size in _PRITHVI_SIZES, f"model_size deve ser um de: {list(_PRITHVI_SIZES)}"
+        backbone_name, select_indices, decoder_channels = _PRITHVI_SIZES[model_size]
         factory = EncoderDecoderFactory()
         self.base = factory.build_model(
-            task="segmentation", 
-            backbone="prithvi_eo_v2_tiny_tl", 
-            backbone_pretrained=pretrained, 
-            backbone_in_chans=6, 
+            task="segmentation",
+            backbone=backbone_name,
+            backbone_pretrained=pretrained,
+            backbone_in_chans=6,
             backbone_num_frames=1,
-            decoder="UperNetDecoder", 
-            decoder_channels=256, 
+            decoder="UperNetDecoder",
+            decoder_channels=decoder_channels,
             num_classes=num_classes,
-            necks=[{"name": "SelectIndices", "indices": [2, 5, 8, 11]}, {"name": "ReshapeTokensToImage"}]
+            necks=[{"name": "SelectIndices", "indices": select_indices}, {"name": "ReshapeTokensToImage"}]
         )
         
         old_proj = self.base.encoder.patch_embed.proj
