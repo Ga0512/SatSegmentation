@@ -1,23 +1,31 @@
 # Prithvi Tiny — config de treinamento principal
 paths:
-  images_dir: "./data/Images"
-  labels_dir: "./data/Labels"
+  images_dir: "./data/img"
+  labels_dir: "./data/mask"
   memmap_dir: "./memmap_output"
-  save_model_path: "./model/best_prithvi_11bands.pth"
+  save_model_path: "./model/best_prithvi_gold_tiny_2.pth"
 
 dataset:
   img_size: [1024, 1024]
   crop_size: 512
-  num_bands: 11
-  num_classes: 19
-  val_size: 0.2
+  num_bands: 4
+  num_classes: 3
+  val_size: 0.20
   num_cores: 4
+  # Ordem das bandas na entrada → peso HLS pretreinado correspondente.
+  # Landsat 8/9 B4=RED, B5=NIR, B6=SWIR-1, B7=SWIR-2.
+  model_bands: ['RED', 'NIR_NARROW', 'SWIR_1', 'SWIR_2']
 
 training:
-  epochs: 60
+  epochs: 200
   patience: 30
-  learning_rate: 0.00005  # 5e-5
-  batch_size: 8
-  weight_decay: 0.01
+  learning_rate: 0.00005  # 5e-5  (LR do backbone pretreinado)
+  decoder_lr:    0.0002   # 2e-4  (4× maior pro decoder/head; reduzido p/ estabilidade)
+  batch_size: 16
+  weight_decay: 0.001
+  focal_gamma:  3.0       # foco agressivo em pixels difíceis
+  focal_weight: 1.0
+  dice_weight:  2.0       # Dice domina sobre Focal — melhor pra classes raras
+  oversample_rare_classes: true
 
 model_size: tiny   # opções: tiny | 100m | 300m | 600m

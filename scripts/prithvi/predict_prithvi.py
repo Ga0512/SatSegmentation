@@ -7,12 +7,12 @@ import torch.nn.functional as F
 from pathlib import Path
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-NUM_CLASSES = 19
-NUM_BANDS = 11
+NUM_CLASSES = 3
+NUM_BANDS = 4
 CROP_SIZE = 512
 BATCH_SIZE = 32
-MODEL_PATH = './model/prithvi_production_fp16.pt'
-INPUT_DIR = './data/Images_2'
+MODEL_PATH = './model/best_prithvi_gold_tiny_production_fp16.pt'
+INPUT_DIR = './data/img'
 OUTPUT_DIR = './predicoes'
 
 stats = np.load('./memmap_output/stats.npz')

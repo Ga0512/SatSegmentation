@@ -2,16 +2,16 @@ import torch
 from src.model import Prithvi11BandsModel
 
 # --- CONFIGURAÇÕES ---
-MODEL_PATH = './model/best_prithvi_11bands.pth'
-OUTPUT_FP16_PATH = './model/best_prithvi_11bands_fp16.pth'
-OUTPUT_STANDALONE_PATH = './model/prithvi_production_fp16.pt' # TorchScript
+MODEL_PATH = './model/best_prithvi_gold_tiny.pth'
+OUTPUT_FP16_PATH = './model/best_prithvi_gold_tiny_fp16.pth'
+OUTPUT_STANDALONE_PATH = './model/best_prithvi_gold_tiny_production_fp16.pt' # TorchScript
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-NUM_CLASSES = 19
-NUM_BANDS = 11
+NUM_CLASSES = 3
+NUM_BANDS = 4
 
 def save_right_and_complete():
     print("1. Inicializando modelo em FP32...")
-    model = Prithvi11BandsModel(NUM_CLASSES, NUM_BANDS, pretrained=False)
+    model = Prithvi11BandsModel(NUM_CLASSES, NUM_BANDS, pretrained=False, model_size="tiny")
     
     ckpt = torch.load(MODEL_PATH, map_location='cpu')
 

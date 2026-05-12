@@ -52,11 +52,13 @@ def train(config):
     
     train_img_mm, train_mask_mm, train_list, pmins, pmaxs, means, stds = build_memmap_and_stats(
         paths['images_dir'], paths['labels_dir'], paths['memmap_dir'], train_files,
-        ds_cfg['num_bands'], img_size_tuple, split_name='train', compute_stats=True
+        ds_cfg['num_bands'], img_size_tuple, split_name='train', compute_stats=True,
+        num_classes=ds_cfg['num_classes'],
     )
     val_img_mm, val_mask_mm, val_list, _, _, _, _ = build_memmap_and_stats(
-        paths['images_dir'], paths['labels_dir'], paths['memmap_dir'], val_files, 
-        ds_cfg['num_bands'], img_size_tuple, split_name='val', compute_stats=False
+        paths['images_dir'], paths['labels_dir'], paths['memmap_dir'], val_files,
+        ds_cfg['num_bands'], img_size_tuple, split_name='val', compute_stats=False,
+        num_classes=ds_cfg['num_classes'],
     )
 
     train_dataset = SegDatasetMemmap(train_img_mm, train_mask_mm, train_list, pmins, pmaxs, means, stds, ds_cfg['num_bands'], ds_cfg['crop_size'])
@@ -87,7 +89,7 @@ def train(config):
     criterion = FocalDiceLoss(
         num_classes=ds_cfg['num_classes'],
         class_weights=class_weights,
-        ignore_index=0,
+        ignore_index=255,  # NoData; class 0 = background é classe válida
     ).to(device)
 
     # Estatísticas de normalização na GPU (substituem o pré-processamento que era no __getitem__)

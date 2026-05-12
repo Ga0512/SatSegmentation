@@ -122,6 +122,17 @@ _PRITHVI_SIZES = {
     '600m': ('prithvi_eo_v2_600_tl',  [7, 15, 23, 31], 256),
 }
 
+# Ordem das bandas no patch_embed pretreinado do Prithvi (HLS).
+# Usada para mapear bandas customizadas (ex: Landsat 4-5-6-7) aos pesos certos.
+_HLS_BAND_INDEX = {
+    'BLUE':       0,
+    'GREEN':      1,
+    'RED':        2,
+    'NIR_NARROW': 3,
+    'SWIR_1':     4,
+    'SWIR_2':     5,
+}
+
 
 class Prithvi11BandsModel(nn.Module):
     '''
@@ -131,7 +142,14 @@ class Prithvi11BandsModel(nn.Module):
     300m        prithvi_eo_v2_300_tl   24      1024
     600m        prithvi_eo_v2_600_tl   32      1280
     '''
-    def __init__(self, num_classes, num_bands=11, pretrained=True, model_size='tiny'):
+    def __init__(self, num_classes, num_bands=11, pretrained=True, model_size='tiny',
+                 model_bands=None):
+        """
+        model_bands: lista opcional de nomes de banda (ordem que a sua entrada vem),
+            ex: ['RED','NIR_NARROW','SWIR_1','SWIR_2'] para Landsat B4-B5-B6-B7.
+            Quando passado, copia o peso pretreinado da banda HLS correta para cada
+            posição da entrada (em vez de assumir ordem [BLUE,GREEN,RED,...]).
+        """
         super().__init__()
         assert model_size in _PRITHVI_SIZES, f"model_size deve ser um de: {list(_PRITHVI_SIZES)}"
         backbone_name, select_indices, decoder_channels = _PRITHVI_SIZES[model_size]
@@ -162,19 +180,31 @@ class Prithvi11BandsModel(nn.Module):
         
         if pretrained:
             with torch.no_grad():
-                # 1. Copia os 6 canais originais (HLS)
-                n_original_bands = old_proj.in_channels # que é 6
-                self.new_proj.weight[:, :n_original_bands, :, :, :] = old_proj.weight.clone()
-                
-                # 2. Calcula a média dos pesos originais ao longo da dimensão dos canais
-                mean_weight = old_proj.weight.mean(dim=1, keepdim=True)
-                
-                # 3. Preenche as bandas extras (da 7 até a 11) com a média expandida
-                extras = num_bands - n_original_bands
-                if extras > 0:
-                    self.new_proj.weight[:, n_original_bands:, :, :, :] = mean_weight.expand(-1, extras, -1, -1, -1)
-                
-                # 4. Copia o bias (Viés) se existir
+                n_original_bands = old_proj.in_channels  # 6 (HLS)
+
+                if model_bands is not None:
+                    # Mapeamento explícito: cada posição da entrada → peso HLS correspondente.
+                    assert len(model_bands) == num_bands, (
+                        f"model_bands tem {len(model_bands)} entradas mas num_bands={num_bands}"
+                    )
+                    for new_pos, band_name in enumerate(model_bands):
+                        if band_name not in _HLS_BAND_INDEX:
+                            raise ValueError(
+                                f"Banda '{band_name}' não está em {list(_HLS_BAND_INDEX)}"
+                            )
+                        hls_idx = _HLS_BAND_INDEX[band_name]
+                        self.new_proj.weight[:, new_pos, :, :, :] = (
+                            old_proj.weight[:, hls_idx, :, :, :].clone()
+                        )
+                else:
+                    # Fallback: assume ordem [BLUE,GREEN,RED,NIR,SWIR1,SWIR2,...].
+                    n_copy = min(num_bands, n_original_bands)
+                    self.new_proj.weight[:, :n_copy, :, :, :] = old_proj.weight[:, :n_copy, :, :, :].clone()
+                    extras = num_bands - n_original_bands
+                    if extras > 0:
+                        mean_weight = old_proj.weight.mean(dim=1, keepdim=True)
+                        self.new_proj.weight[:, n_original_bands:, :, :, :] = mean_weight.expand(-1, extras, -1, -1, -1)
+
                 if old_proj.bias is not None:
                     self.new_proj.bias.copy_(old_proj.bias)
                 

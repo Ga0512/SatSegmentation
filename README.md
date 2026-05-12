@@ -1,11 +1,11 @@
 # Satellite Segmentation Framework
 
-Framework de segmentação semântica para imagens de satélite multiespectrais (11 bandas), comparando duas arquiteturas:
+Framework de segmentação semântica para imagens de satélite multiespectrais, comparando duas arquiteturas:
 
-- **Prithvi**: Foundation model geoespacial IBM/NASA (ViT-Base, 100M parâmetros, pré-treinado em dados HLS)
-- **AttentionResUNet**: Encoder ResNet34 + decoder com attention gates espaciais e de canal
+- **Prithvi**: Foundation model geoespacial IBM/NASA (ViT pré-treinado em dados HLS — Landsat/Sentinel-2 harmonizados). Variantes `tiny`, `100m`, `300m`, `600m`
+- **AttentionResUNet**: Encoder ResNet34/50 + decoder com attention gates espaciais e de canal
 
-Ambos os modelos foram treinados sobre imagens 1024×1024 com 19 classes de uso e cobertura do solo.
+O framework é **agnóstico a sensor e número de classes**: a quantidade de bandas, a ordem delas e o número de classes são definidos via YAML. O mapeamento das bandas de entrada para os pesos pré-treinados do HLS é explícito (`model_bands`), o que evita inicializar com peso errado quando a ordem das bandas difere do HLS.
 
 ![alt text](asset/image.png)
 
@@ -17,12 +17,14 @@ Ambos os modelos foram treinados sobre imagens 1024×1024 com 19 classes de uso 
 2. [Setup — Windows (venv)](#setup--windows-venv)
 3. [Setup — Docker](#setup--docker)
 4. [Pipeline de Dados](#pipeline-de-dados)
-5. [Treinamento](#treinamento)
-6. [Inferência](#inferência)
-7. [Exportação de Modelos](#exportação-de-modelos)
-8. [Estrutura de Diretórios](#estrutura-de-diretórios)
-9. [Configurações](#configurações)
-10. [Métricas e Monitoramento](#métricas-e-monitoramento)
+5. [Mapeamento de Bandas](#mapeamento-de-bandas)
+6. [Treinamento](#treinamento)
+7. [Inferência](#inferência)
+8. [Exportação de Modelos](#exportação-de-modelos)
+9. [Estrutura de Diretórios](#estrutura-de-diretórios)
+10. [Configurações](#configurações)
+11. [Métricas e Monitoramento](#métricas-e-monitoramento)
+12. [Benchmark](#benchmark)
 
 ---
 
@@ -31,7 +33,7 @@ Ambos os modelos foram treinados sobre imagens 1024×1024 com 19 classes de uso 
 ```
 SatSegmentation/
 ├── config/
-│   ├── prithvi.yaml          # Hiperparâmetros do Prithvi
+│   ├── prithvi.yaml          # Hiperparâmetros do Prithvi (incluindo model_bands)
 │   └── unet.yaml             # Hiperparâmetros do U-Net
 ├── scripts/
 │   ├── prithvi/
@@ -43,7 +45,7 @@ SatSegmentation/
 │       ├── predict_unet.py   # Inferência ONNX com tiling e overlap
 │       └── export_onnx_unet.py
 ├── src/
-│   ├── model.py              # AttentionResUNet + Prithvi11BandsModel
+│   ├── model.py              # AttentionResUNet + Prithvi11BandsModel (com _HLS_BAND_INDEX)
 │   ├── dataset.py            # SegDatasetMemmap, PrithviDataset, augmentação GPU
 │   ├── metrics.py            # FocalDiceLoss, mIoU, Dice, Kappa, plots
 │   ├── utils.py              # Pesos de classe, avaliação, file pairing
@@ -51,8 +53,8 @@ SatSegmentation/
 │   ├── eval.py               # Loop de validação com CSV + confusion matrix
 │   └── fix_terratorch.py     # Patch de instalação do TerraTorch (one-time)
 ├── data/
-│   ├── Images/               # GeoTIFFs de entrada (11 bandas)
-│   └── Labels/               # Máscaras de segmentação (*_mask.tif)
+│   ├── img/                  # GeoTIFFs de entrada
+│   └── mask/                 # Máscaras de segmentação (*_mask.tif)
 └── memmap_output/            # Dados pré-processados (gerado automaticamente)
 ```
 
@@ -134,10 +136,61 @@ GeoTIFFs (./data/) → build_memmap_and_stats() → ./memmap_output/*.dat + stat
 ### Detalhes técnicos
 
 - Imagens armazenadas como `uint16` (2 bytes/pixel), máscaras como `int16`
-- Crops de 512×512 extraídos de forma não-sobreposta das imagens 1024×1024
+- Crops não-sobrepostos do tamanho `crop_size` extraídos das imagens originais
 - Estatísticas por banda (percentis p2/p98, média, desvio padrão) calculadas uma única vez e salvas em `stats.npz`
 - **Normalização executada na GPU** (clamp percentílico + z-score por banda) — os workers de CPU fazem apenas leitura e cast de tipo
-- A construção do memmap é automática na primeira execução do treino; execuções subsequentes reutilizam os arquivos existentes
+- A construção do memmap é automática na primeira execução; execuções subsequentes reutilizam os arquivos existentes
+
+### Tratamento de NoData e índices inválidos
+
+A máscara passa por duas defesas durante a construção do memmap:
+
+1. **NoData**: pixels com o valor `NoDataValue` declarado nos metadados do GeoTIFF (da imagem **ou** da máscara) são marcados como `IGNORE_INDEX = 255`. Esses pixels são ignorados pela loss (`ignore_index=255`) e nas métricas.
+2. **Índices fora de `[0, num_classes)`**: quando `num_classes` é passado ao builder, qualquer valor de classe residual (ex: anotações antigas com classe 4 em um setup atual de 3 classes) é convertido em `IGNORE_INDEX` e logado. Evita crash do `F.one_hot` no `FocalDiceLoss` (CUDA device-side assert) e o silencioso enviesamento de métricas.
+
+`class 0` é **classe válida (background)**, não NoData — é tratada como qualquer outra classe pela loss e pelas métricas.
+
+---
+
+## Mapeamento de Bandas
+
+O Prithvi foi pré-treinado em 6 bandas HLS, nesta ordem:
+
+| Posição HLS | Banda       |
+|-------------|-------------|
+| 0           | BLUE        |
+| 1           | GREEN       |
+| 2           | RED         |
+| 3           | NIR_NARROW  |
+| 4           | SWIR_1      |
+| 5           | SWIR_2      |
+
+No YAML, o campo `dataset.model_bands` declara **qual banda HLS cada posição da sua entrada representa**. O `Prithvi11BandsModel` lê isso e copia o peso pré-treinado correto para cada canal de `patch_embed.proj`, em vez de assumir cegamente a ordem `[BLUE, GREEN, RED, ...]`.
+
+### Exemplos
+
+**Landsat 8/9 — B4, B5, B6, B7** (canônico para exploração mineral, clay/silica via SWIR):
+
+```yaml
+dataset:
+  num_bands: 4
+  model_bands: ['RED', 'NIR_NARROW', 'SWIR_1', 'SWIR_2']
+```
+
+**Sentinel-2 — B2, B3, B4, B8A, B11, B12**:
+
+```yaml
+dataset:
+  num_bands: 6
+  model_bands: ['BLUE', 'GREEN', 'RED', 'NIR_NARROW', 'SWIR_1', 'SWIR_2']
+```
+
+### Comportamento de fallback
+
+- Se `model_bands` **não** for declarado: o modelo cai no comportamento antigo — copia as primeiras `N` bandas do HLS na ordem default. Bandas extras (além de 6) são inicializadas com a média dos pesos HLS.
+- Se um nome em `model_bands` **não** existir em `_HLS_BAND_INDEX` (ex: `RED_EDGE`): hoje o modelo levanta `ValueError`. Para sensores com bandas fora do HLS (Red Edge do Sentinel-2, Coastal Aerosol), seria preciso estender `_HLS_BAND_INDEX` com uma estratégia de inicialização para a banda nova.
+
+> **Trocar de sensor** = mudar `num_bands` + `model_bands` no YAML, apagar `./memmap_output/`, e rodar. Sem mexer em código.
 
 ---
 
@@ -155,10 +208,11 @@ python -m scripts.prithvi.train_prithvi --config config/prithvi.yaml --resume pa
 
 **Características do loop:**
 - Mixed precision (AMP FP16) com gradient clipping (`max_norm=1.0`)
-- Scheduler: Linear warmup (5 épocas, 1% → 100% do LR) + Cosine Annealing
-- Loss: `CrossEntropyLoss` com `class_weights` (log-inverso de frequência) e `ignore_index=0`
-- Métricas: `JaccardIndex` e `Accuracy` via TorchMetrics (ignoram background)
-- Checkpoint salvo quando `val_loss` melhora; early stopping com `patience=30`
+- Scheduler: Linear warmup + Cosine Annealing
+- Loss: **`FocalDiceLoss`** com `class_weights`, `focal_gamma`, `focal_weight`, `dice_weight`, `ignore_index=255`
+- LR diferenciado: `learning_rate` para o backbone pré-treinado e `decoder_lr` (≥ backbone LR) para o decoder/head
+- `oversample_rare_classes: true` — usa `WeightedRandomSampler` para visitar mais frequentemente patches com classes minoritárias
+- Métricas: `JaccardIndex` (mIoU) e `Accuracy` via TorchMetrics
 
 ### AttentionResUNet
 
@@ -169,16 +223,16 @@ python -m scripts.unet.train_unet --config config/unet.yaml
 **Características do loop:**
 - Mixed precision (AMP FP16) com gradient accumulation (effective batch = `batch_size × grad_accum`)
 - Scheduler: Cosine Annealing
-- Loss: `FocalDiceLoss` com `class_weights`, `ignore_index=0` — background excluído tanto da Focal quanto do Dice
+- Loss: `FocalDiceLoss` com `class_weights`, `ignore_index=255`
 - Augmentação GPU via Kornia: flip, rotação 90°, brilho/contraste, affine, blur gaussiano
 - `torch.channels_last` no modelo para melhor throughput em GPUs com Tensor Cores
 
 ### Pesos de classe
 
 Calculados automaticamente por `compute_class_weights()`:
-- Frequência inversa com suavização logarítmica: `w = log(1 / (freq + 1e-8))`
-- Clipping em `[0.2, 10.0]` para evitar pesos extremos
-- Background (classe 0) recebe peso `0.0` — tratado via `ignore_index` na loss
+- Frequência inversa com suavização logarítmica
+- Clipping para evitar pesos extremos
+- Pixels marcados como `IGNORE_INDEX` (NoData ou out-of-range) são excluídos da contagem
 - Normalizados para média 1.0 sobre as classes ativas
 
 ---
@@ -203,7 +257,7 @@ python -m scripts.unet.predict_unet
 ```
 
 - Inferência via ONNX Runtime com `CUDAExecutionProvider`
-- Tiling com overlap de 128px e média ponderada por mapa gaussiano centrado (elimina artefatos de borda)
+- Tiling com overlap e média ponderada por mapa gaussiano centrado (elimina artefatos de borda)
 - Normalização clamp + z-score na GPU antes de cada batch
 - Saída: GeoTIFF comprimido (LZW, tiled) em `./Masks/`
 
@@ -218,7 +272,7 @@ python -m scripts.prithvi.prithvi_fp16
 ```
 
 Gera dois artefatos:
-- `./model/best_prithvi_11bands_fp16.pth` — state dict em FP16
+- `./model/best_prithvi_*_fp16.pth` — state dict em FP16
 - `./model/prithvi_production_fp16.pt` — TorchScript standalone (sem dependência de `src/`)
 
 ### AttentionResUNet → ONNX
@@ -233,8 +287,8 @@ python -m scripts.unet.export_onnx_unet
 
 | Diretório | Conteúdo |
 |---|---|
-| `./data/Images/` | GeoTIFFs de entrada (11 bandas, 1024×1024) |
-| `./data/Labels/` | Máscaras `*_mask.tif` (19 classes) |
+| `./data/img/` | GeoTIFFs de entrada (N bandas, dimensões definidas em `img_size`) |
+| `./data/mask/` | Máscaras `*_mask.tif` (valores em `[0, num_classes)` ou NoData) |
 | `./memmap_output/` | `*.dat` + `stats.npz` (gerado automaticamente) |
 | `./model/` | Pesos Prithvi (`.pth`, FP16 `.pt`) |
 | `./output/` | Melhor checkpoint U-Net, CSV de validação, confusion matrix |
@@ -247,42 +301,70 @@ python -m scripts.unet.export_onnx_unet
 
 ## Configurações
 
+Os dois configs são totalmente genéricos: `num_bands`, `num_classes`, `img_size`, `crop_size`, hiperparâmetros e arquitetura são definidos no YAML. O código não tem nenhum valor hard-coded de classe ou banda.
+
 ### `config/prithvi.yaml`
 
 ```yaml
+paths:
+  images_dir: "<dir das imagens>"
+  labels_dir: "<dir das máscaras>"
+  memmap_dir:  "<dir do memmap>"
+  save_model_path: "<caminho do checkpoint>"
+
 dataset:
-  img_size: [1024, 1024]
-  crop_size: 512
-  num_bands: 11
-  num_classes: 19
-  val_size: 0.20        # 80/20 split
-  num_cores: 4          # workers do DataLoader
+  img_size: [<H>, <W>]
+  crop_size: <int>
+  num_bands:   <N>           # qualquer N >= 1
+  num_classes: <K>           # qualquer K >= 2 (inclui background se houver)
+  val_size: <float>          # fração de validação
+  num_cores: <int>           # workers do DataLoader
+  # Opcional: mapeia cada posição da entrada para a banda HLS correspondente
+  # (ver seção "Mapeamento de Bandas"). Se omitido, usa fallback.
+  model_bands: ['<HLS_BAND>', ...]   # len(model_bands) == num_bands
 
 training:
-  epochs: 60
-  patience: 30          # early stopping
-  learning_rate: 5e-5
-  batch_size: 8
-  weight_decay: 0.01
+  epochs:     <int>
+  patience:   <int>          # early stopping
+  learning_rate: <float>     # LR do backbone pré-treinado
+  decoder_lr:    <float>     # LR do decoder/head (geralmente ≥ backbone LR)
+  batch_size:    <int>
+  weight_decay:  <float>
+  focal_gamma:   <float>     # γ da Focal — foco em pixels difíceis
+  focal_weight:  <float>     # peso do termo Focal na loss
+  dice_weight:   <float>     # peso do termo Dice na loss
+  oversample_rare_classes: <bool>    # WeightedRandomSampler
+
+model_size: <tiny | 100m | 300m | 600m>
 ```
 
 ### `config/unet.yaml`
 
 ```yaml
+paths:
+  images_dir: "<dir das imagens>"
+  labels_dir: "<dir das máscaras>"
+  csv_validation:  "<csv de validação>"
+  checkpoint_path: "<dir de saída>"
+  best_model_path: "<caminho do melhor modelo>"
+  memmap_dir:      "<dir do memmap>"
+
 dataset:
-  img_size: [1024, 1024]
-  crop_size: 512
-  num_bands: 11
-  num_classes: 19
-  val_size: 0.25        # 75/25 split
-  num_cores: 4
+  img_size: [<H>, <W>]
+  crop_size: <int>
+  num_bands:   <N>
+  num_classes: <K>
+  val_size:  <float>
+  num_cores: <int>
 
 training:
-  epochs: 25
-  patience: 10
-  learning_rate: 5e-5
-  batch_size: 8
-  grad_accum: 2         # effective batch = 16
+  epochs:        <int>
+  patience:      <int>
+  learning_rate: <float>
+  batch_size:    <int>
+  grad_accum:    <int>       # effective batch = batch_size × grad_accum
+
+model_size: <resnet34 | resnet50>
 ```
 
 ---
@@ -294,8 +376,8 @@ A cada época são registrados e plotados:
 | Métrica | Descrição |
 |---|---|
 | `train_loss` / `val_loss` | Loss média por época |
-| `val_miou` | mIoU excluindo background (classes 1–18) |
-| `val_acc` | Pixel accuracy excluindo background |
+| `val_miou` | mIoU médio das classes de foreground (exclui background da média final) |
+| `val_acc` | Pixel accuracy |
 | `lr` | Learning rate atual |
 | `time` | Tempo de execução por época (s) |
 | `gpu_mem` | Pico de memória GPU alocada (GB) |
@@ -311,16 +393,19 @@ Ao final do treino, `evaluate_model()` gera:
 
 - **`src/fix_terratorch.py`** deve ser executado uma vez após a instalação — corrige a constante `SENTINEL2_ALL_SOFTCON → SENTINEL2_ALL_MOCO` na biblioteca TerraTorch instalada
 - Todos os scripts são invocados como módulos (`python -m scripts.X.Y`), não diretamente
-- O Prithvi estende o patch embedding pré-treinado de 6 para 11 bandas: os 6 canais HLS originais são copiados diretamente e as 5 bandas extras são inicializadas com a média dos pesos originais
+- O Prithvi adapta o `patch_embed.proj` original (6 canais HLS) para o número de bandas declarado em `num_bands`, copiando o peso pré-treinado de cada banda HLS correta para a posição certa via `model_bands`
+- `IGNORE_INDEX = 255` em `src/dataset.py` é o sentinela para NoData e índices inválidos — mantido consistente entre o builder de memmap, a `FocalDiceLoss` e as métricas
 - Não há testes unitários; a avaliação é integrada ao loop de treino e produz CSVs e plots automaticamente
 
-## Benchmark — Prithvi Tiny | Prithvi 100M | UNet R34 | UNet R50
+---
+
+## Benchmark
+
+> Os números abaixo foram coletados em uma configuração específica (11 bandas, 19 classes). Servem como referência **relativa** entre arquiteturas — valores absolutos variam com o número de bandas, classes, tamanho da imagem e qualidade do dataset.
 
 **Dispositivo:** cuda  
 **GPU:** NVIDIA GeForce RTX 3060 Laptop GPU  
 **batch_size:** 4 | **n_batches inferência:** 20
-
----
 
 ### 1/4 — MODELO
 
@@ -329,9 +414,7 @@ Ao final do treino, `evaluate_model()` gera:
 | Parâmetros totais (M)        | 13.2         | 96.9         | 24.7     | 75.5     |
 | Parâmetros treináveis (M)    | 13.2         | 96.9         | 24.7     | 75.5     |
 | Checkpoint .pth (MB)         | 151.08       | 1109.38      | 94.24    | 288.54   |
-| Checkpoint presente          | ✓            | ✓            | ✓        | ✓        |
-
----
+| Checkpoint presente          | OK           | OK           | OK       | OK       |
 
 ### 2/4 — INFERÊNCIA (batch=4, crop=512×512, n=20)
 
@@ -341,9 +424,7 @@ Ao final do treino, `evaluate_model()` gera:
 | ms / amostra                 | 19.2         | 85.2         | 25.5     | 81.1     |
 | amostras / segundo           | 52.1         | 11.7         | 39.2     | 12.3     |
 | pico GPU — inf (GB)          | 0.38         | 0.87         | 1.31     | 2.42     |
-| speedup vs Prithvi-Tiny      | 1.00×        | 0.23×        | 0.75×    | 0.24×    |
-
----
+| speedup vs Prithvi-Tiny      | 1.00x        | 0.23x        | 0.75x    | 0.24x    |
 
 ### 3/4 — TREINO (métricas dos checkpoints)
 
@@ -356,8 +437,6 @@ Ao final do treino, `evaluate_model()` gera:
 | Mem GPU pico treino (GB)     | 1.95         | 5.24         | 3.26     | 6.77     |
 | LR final (média 3 ep.)       | 7.47e-06     | 1.93e-05     | —        | —        |
 | Early stopping               | Não          | Não          | Sim (ep 58) | Não   |
-
----
 
 ### 4/4 — QUALIDADE (validação)
 
@@ -387,13 +466,13 @@ Ao final do treino, `evaluate_model()` gera:
 - **UNet-R50**: 208.5s/época, 6.77 GB — o mais pesado
 
 ### Qualidade Preditiva
-- **🏆 Prithvi-100M**: melhor qualidade absoluta (mIoU 0.6495)
+- **Prithvi-100M**: melhor qualidade absoluta (mIoU 0.6495)
 - **Prithvi-Tiny**: segundo lugar (mIoU 0.6011)
 - **UNet-R50**: terceiro (mIoU 0.3005)
 - **UNet-R34**: último (mIoU 0.2810)
 
 ### Trade-offs Chave
-- **Prithvi foundation models** dominam em qualidade (2× melhor mIoU que ResNets)
-- **ResNets** são mais rápidos no treino, mas menos precisos
+- **Prithvi foundation models** dominam em qualidade (≈2× melhor mIoU que ResNets) — diferença esperada quando se aproveita pré-treinamento HLS via `model_bands`
+- **ResNets** são mais rápidos no treino, mas menos precisos no nosso domínio
 - **Prithvi-Tiny** oferece o melhor custo-benefício geral
 - **UNet-R50** não compensa o custo: treina 16× mais devagar que R34 para apenas 7% mais mIoU

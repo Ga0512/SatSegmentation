@@ -8,17 +8,17 @@ import torch.optim as optim
 import logging
 import numpy as np
 from tqdm import tqdm
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader, Subset, WeightedRandomSampler
 from sklearn.model_selection import train_test_split
 import kornia.augmentation as K
 from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
 from torchmetrics import JaccardIndex, Accuracy
 
 from src.model import Prithvi11BandsModel
-from src.dataset import PrithviDataset, build_memmap_and_stats_prithvi
-from src.metrics import save_clean_plots
+from src.dataset import PrithviDataset, build_memmap_and_stats_prithvi, build_gpu_augmenter
+from src.metrics import save_clean_plots, FocalDiceLoss
 from src.checkpoint_model import load_checkpoint, _empty_history, save_checkpoint
-from src.utils import compute_class_weights
+from src.utils import compute_class_weights, compute_patch_class_distribution
 
 logging.basicConfig(level=logging.INFO)
 
@@ -48,7 +48,8 @@ def train(config, resume_path=None):
     all_files = [f for f in os.listdir(paths['images_dir']) if f.lower().endswith('.tif')]
     img_p, mask_p, means, stds = build_memmap_and_stats_prithvi(
         paths['images_dir'], paths['labels_dir'], paths['memmap_dir'],
-        all_files, ds_cfg['num_bands'], tuple(ds_cfg['img_size']), ds_cfg['crop_size']
+        all_files, ds_cfg['num_bands'], tuple(ds_cfg['img_size']), ds_cfg['crop_size'],
+        num_classes=ds_cfg['num_classes'],
     )
 
     total_samples = len(all_files) * (ds_cfg['img_size'][0] // ds_cfg['crop_size']) ** 2
@@ -60,11 +61,54 @@ def train(config, resume_path=None):
     indices = np.arange(total_samples)
     train_idx, val_idx = train_test_split(indices, test_size=ds_cfg['val_size'], random_state=42)
 
-    train_loader = DataLoader(
-        Subset(dataset, train_idx), batch_size=tr_cfg['batch_size'],
-        shuffle=True, num_workers=ds_cfg['num_cores'],
-        pin_memory=True, persistent_workers=True, prefetch_factor=ds_cfg['num_cores']
+    # Pesos por classe (precisa vir antes do sampler)
+    class_weights = compute_class_weights(
+        mask_p, list(range(total_samples)),
+        ds_cfg['crop_size'], ds_cfg['num_classes']
     )
+
+    # Oversampling pela RARIDADE EM PATCHES da classe (não pela fração de pixels).
+    # Para cada patch i: peso = max_c (boost[c] se classe c presente em i)
+    # onde boost[c] = total_patches / patches_que_contêm_c
+    # Patches com classes raras "puxam" o sampling; o background não dá boost.
+    use_oversampling = tr_cfg.get('oversample_rare_classes', True)
+    if use_oversampling:
+        train_dist = compute_patch_class_distribution(
+            mask_p, total_samples, train_idx.tolist(),
+            ds_cfg['crop_size'], ds_cfg['num_classes']
+        )
+        presence = (train_dist > 0).astype(np.float32)
+        patches_with_class = presence.sum(0)
+        logging.info(f"Patches contendo cada classe (treino): "
+                     f"{ {i: int(patches_with_class[i]) for i in range(ds_cfg['num_classes'])} }")
+
+        N_train = len(train_idx)
+        boost = N_train / np.maximum(patches_with_class, 1.0)   # [C]
+        boost[0] = 1.0  # background nunca puxa o sampler
+
+        logging.info(f"Boost de raridade por classe (p/ sampler): "
+                     f"{ {i: float(f'{boost[i]:.2f}') for i in range(ds_cfg['num_classes'])} }")
+
+        sampler_weights = (presence * boost[None, :]).max(axis=1)
+        sampler_weights = np.clip(sampler_weights, 1e-3, None)
+
+        sampler = WeightedRandomSampler(
+            weights=torch.from_numpy(sampler_weights).double(),
+            num_samples=N_train,
+            replacement=True,
+        )
+        train_loader = DataLoader(
+            Subset(dataset, train_idx), batch_size=tr_cfg['batch_size'],
+            sampler=sampler, num_workers=ds_cfg['num_cores'],
+            pin_memory=True, persistent_workers=True, prefetch_factor=ds_cfg['num_cores'], drop_last=True
+        )
+    else:
+        train_loader = DataLoader(
+            Subset(dataset, train_idx), batch_size=tr_cfg['batch_size'],
+            shuffle=True, num_workers=ds_cfg['num_cores'],
+            pin_memory=True, persistent_workers=True, prefetch_factor=ds_cfg['num_cores'], drop_last=True
+        )
+
     val_loader = DataLoader(
         Subset(dataset, val_idx), batch_size=tr_cfg['batch_size'],
         num_workers=ds_cfg['num_cores'],
@@ -76,10 +120,29 @@ def train(config, resume_path=None):
         ds_cfg['num_classes'],
         ds_cfg['num_bands'],
         model_size=config.get('model_size', 'tiny'),
+        model_bands=ds_cfg.get('model_bands', None),
     ).to(device)
-    optimizer = optim.AdamW(model.parameters(),
-                            lr=tr_cfg['learning_rate'],
-                            weight_decay=tr_cfg['weight_decay'])
+    # LR diferenciado: backbone pretreinado (ViT blocks) usa LR baixo; patch_embed novo,
+    # decoder e head (frescos) usam LR maior. Padrão em fine-tuning de ViT.
+    backbone_params, decoder_params = [], []
+    for n, p in model.named_parameters():
+        if not p.requires_grad:
+            continue
+        if 'encoder' in n and 'patch_embed' not in n:
+            backbone_params.append(p)
+        else:
+            decoder_params.append(p)
+
+    backbone_lr = tr_cfg['learning_rate']
+    decoder_lr  = tr_cfg.get('decoder_lr', backbone_lr * 10)
+    logging.info(f"Param groups: backbone={len(backbone_params)} (lr={backbone_lr:.1e}) | "
+                 f"decoder/head={len(decoder_params)} (lr={decoder_lr:.1e})")
+
+    optimizer = optim.AdamW(
+        [{'params': backbone_params, 'lr': backbone_lr},
+         {'params': decoder_params,  'lr': decoder_lr}],
+        weight_decay=tr_cfg['weight_decay'],
+    )
     
     # Defina quantas épocas de warmup você quer (geralmente entre 5% a 10% do total de épocas)
     warmup_epochs = 5 
@@ -108,27 +171,28 @@ def train(config, resume_path=None):
         milestones=[warmup_epochs] # O momento exato (época) onde ocorre a troca
     )
 
-    #scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=tr_cfg['epochs'])
-    class_weights = compute_class_weights(
-        mask_p, list(range(total_samples)),
-        ds_cfg['crop_size'], ds_cfg['num_classes']
-    )
-    criterion = nn.CrossEntropyLoss(
-        weight=torch.tensor(class_weights, dtype=torch.float32).to(device),
-        ignore_index=0
-    )
+    criterion = FocalDiceLoss(
+        num_classes=ds_cfg['num_classes'],
+        class_weights=class_weights,
+        gamma=tr_cfg.get('focal_gamma', 2.0),
+        focal_weight=tr_cfg.get('focal_weight', 1.0),
+        dice_weight=tr_cfg.get('dice_weight', 1.0),
+        ignore_index=255,
+    ).to(device)
 
     metric_miou = JaccardIndex(
-        task="multiclass", num_classes=ds_cfg['num_classes'], ignore_index=0
+        task="multiclass", num_classes=ds_cfg['num_classes'], ignore_index=255
+    ).to(device)
+    # mIoU por classe — diagnóstico pra detectar colapso na classe majoritária
+    metric_miou_pc = JaccardIndex(
+        task="multiclass", num_classes=ds_cfg['num_classes'], ignore_index=255,
+        average=None,
     ).to(device)
     metric_acc = Accuracy(
-        task="multiclass", num_classes=ds_cfg['num_classes'], ignore_index=0
+        task="multiclass", num_classes=ds_cfg['num_classes'], ignore_index=255
     ).to(device)
 
-    aug = K.AugmentationSequential(
-        K.RandomHorizontalFlip(), K.RandomVerticalFlip(),
-        data_keys=['input', 'mask']
-    ).to(device)
+    geometric, photometric = build_gpu_augmenter()
 
     # ── 4. RESUME ─────────────────────────────────────────────────────────────
     # Resolve o caminho: --resume pode ser o path explícito ou auto (usa save_model_path)
@@ -168,8 +232,11 @@ def train(config, resume_path=None):
 
                 x = (x - device_means) / (device_stds + 1e-6)
 
-                #x, y = aug(x, y.float())
-                #y = y.squeeze(1).long()
+                with torch.no_grad():
+                    y = y.unsqueeze(1).float()
+                    x, y = geometric(x, y)
+                    x = photometric(x)
+                    y = y.squeeze(1).long()
 
                 with torch.amp.autocast('cuda'):
                     logits = model(x)
@@ -191,6 +258,7 @@ def train(config, resume_path=None):
             model.eval()
             val_loss = 0
             metric_miou.reset()
+            metric_miou_pc.reset()
             metric_acc.reset()
 
             with torch.no_grad(), torch.amp.autocast('cuda'):
@@ -200,17 +268,22 @@ def train(config, resume_path=None):
                     vx = (vx - device_means) / (device_stds + 1e-6)
 
                     v_logits  = model(vx)
-                    
+
                     # Remove a dimensão extra de canal da máscara
                     vy_squeezed = vy.squeeze(1).long() if vy.dim() == 4 else vy.long()
-                    
+
                     val_loss += criterion(v_logits, vy_squeezed).item()
                     metric_miou.update(v_logits, vy_squeezed)
+                    metric_miou_pc.update(v_logits, vy_squeezed)
                     metric_acc.update(v_logits, vy_squeezed)
 
             final_miou = metric_miou.compute().item()
+            final_miou_pc = metric_miou_pc.compute().detach().cpu().numpy()
             final_acc  = metric_acc.compute().item()
             avg_v_loss = val_loss / len(val_loader)
+
+            pc_str = " ".join(f"c{i}={iou:.3f}" for i, iou in enumerate(final_miou_pc))
+            logging.info(f"[Epoch {epoch+1}] mIoU per class: {pc_str}")
 
             scheduler.step()
 

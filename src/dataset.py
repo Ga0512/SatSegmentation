@@ -10,6 +10,10 @@ gdal.UseExceptions()
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+# Marca pixels NoData (bordas, áreas sem cobertura) na máscara.
+# Distinto de class 0 (background válido). A loss usa ignore_index=IGNORE_INDEX.
+IGNORE_INDEX = 255
+
 
 class SegDatasetMemmap(Dataset):
     def __init__(self, img_memmap_path, mask_memmap_path, file_list, pmins, pmaxs, means, stds, num_bands, crop_size):
@@ -94,7 +98,8 @@ def match_mask_file(img_fname, labels_dir):
     return None
 
 def build_memmap_and_stats(images_dir, labels_dir, memmap_dir, file_list, num_bands, img_size, crop_size=512,
-                           split_name='train', p_low=2, p_high=98, sample_per_image=10000, compute_stats=True):
+                           split_name='train', p_low=2, p_high=98, sample_per_image=10000, compute_stats=True,
+                           num_classes=None):
 
     H, W = img_size
     crops_per_row = H // crop_size
@@ -137,18 +142,36 @@ def build_memmap_and_stats(images_dir, labels_dir, memmap_dir, file_list, num_ba
         # Lê a imagem inteira
         full_img = ds_img.ReadAsArray()  # shape: (bands, H, W)
         full_mask = ds_mask.GetRasterBand(1).ReadAsArray()
+        full_mask = full_mask.astype(np.int16, copy=False)
 
-        # Trata NoData das bandas
+        # Trata NoData das bandas — também acumula um valid_mask por imagem
+        img_invalid = np.zeros(full_img.shape[1:], dtype=bool)
         for b in range(num_bands):
             band = ds_img.GetRasterBand(b + 1)
             nodata = band.GetNoDataValue()
             if nodata is not None:
-                full_img[b][full_img[b] == nodata] = 0
+                bnd_invalid = (full_img[b] == nodata)
+                img_invalid |= bnd_invalid
+                full_img[b][bnd_invalid] = 0
 
-        # Trata NoData da máscara
+        # NoData explícito da máscara
         nodata_mask = ds_mask.GetRasterBand(1).GetNoDataValue()
         if nodata_mask is not None:
-            full_mask[full_mask == nodata_mask] = 0
+            mask_invalid = (full_mask == nodata_mask)
+        else:
+            mask_invalid = np.zeros_like(full_mask, dtype=bool)
+
+        # Pixels inválidos (na imagem ou na máscara) viram IGNORE_INDEX,
+        # preservando class 0 como background válido.
+        full_mask[img_invalid | mask_invalid] = IGNORE_INDEX
+
+        # Sane valores fora de [0, num_classes) que não sejam IGNORE_INDEX
+        if num_classes is not None:
+            out_of_range = (full_mask != IGNORE_INDEX) & ((full_mask < 0) | (full_mask >= num_classes))
+            n_oor = int(out_of_range.sum())
+            if n_oor > 0:
+                logging.info(f"[memmap] {fname}: {n_oor} pixels fora de [0,{num_classes}) marcados como IGNORE")
+                full_mask[out_of_range] = IGNORE_INDEX
 
         # --- slicing em memória ---
         for row in range(crops_per_row):
@@ -215,7 +238,7 @@ def build_memmap_and_stats(images_dir, labels_dir, memmap_dir, file_list, num_ba
 
     return img_path, mask_path, np.array(names), pmins, pmaxs, means, stds
 
-def build_memmap_and_stats_prithvi(images_dir, labels_dir, memmap_dir, file_list, num_bands, img_size, crop_size):
+def build_memmap_and_stats_prithvi(images_dir, labels_dir, memmap_dir, file_list, num_bands, img_size, crop_size, num_classes=None):
     H, W = img_size
     crops_per_row, crops_per_col = H // crop_size, W // crop_size
     total_samples = len(file_list) * crops_per_row * crops_per_col
@@ -235,7 +258,32 @@ def build_memmap_and_stats_prithvi(images_dir, labels_dir, memmap_dir, file_list
         img_ds = gdal.Open(os.path.join(images_dir, fname))
         mask_ds = gdal.Open(os.path.join(labels_dir, mask_fname))
         img_arr = img_ds.ReadAsArray()
-        mask_arr = mask_ds.ReadAsArray()
+        mask_arr = mask_ds.ReadAsArray().astype(np.int16, copy=False)
+
+        # Detecta NoData a partir dos metadados (imagem por banda + máscara)
+        img_invalid = np.zeros(img_arr.shape[1:], dtype=bool)
+        for b in range(num_bands):
+            nodata = img_ds.GetRasterBand(b + 1).GetNoDataValue()
+            if nodata is not None:
+                bnd_invalid = (img_arr[b] == nodata)
+                img_invalid |= bnd_invalid
+                img_arr[b][bnd_invalid] = 0
+        nodata_mask = mask_ds.GetRasterBand(1).GetNoDataValue()
+        if nodata_mask is not None:
+            mask_invalid = (mask_arr == nodata_mask)
+        else:
+            mask_invalid = np.zeros_like(mask_arr, dtype=bool)
+        mask_arr[img_invalid | mask_invalid] = IGNORE_INDEX
+
+        # Sane qualquer valor fora de [0, num_classes) que não seja IGNORE_INDEX
+        # (classes residuais de anotações antigas, sentinelas implícitos, etc.)
+        if num_classes is not None:
+            out_of_range = (mask_arr != IGNORE_INDEX) & ((mask_arr < 0) | (mask_arr >= num_classes))
+            n_oor = int(out_of_range.sum())
+            if n_oor > 0:
+                logging.info(f"[memmap] {fname}: {n_oor} pixels fora de [0,{num_classes}) marcados como IGNORE")
+                mask_arr[out_of_range] = IGNORE_INDEX
+
         for r in range(crops_per_row):
             for c in range(crops_per_col):
                 y, x = r*crop_size, c*crop_size

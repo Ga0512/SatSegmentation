@@ -79,7 +79,7 @@ class FocalLoss(nn.Module):
 
 class FocalDiceLoss(nn.Module):
     def __init__(self, num_classes, class_weights=None, gamma=1.0, dice_weight=1.0, focal_weight=1.0,
-                 ignore_index=0, eps=1e-6):
+                 ignore_index=255, eps=1e-6):
         """
         Loss combinada: Focal + Dice para segmentação multi-classe.
 
@@ -89,7 +89,8 @@ class FocalDiceLoss(nn.Module):
             gamma:         parâmetro gamma da focal loss
             dice_weight:   peso da Dice Loss
             focal_weight:  peso da Focal Loss
-            ignore_index:  índice de classe a ignorar (background); -1 desativa
+            ignore_index:  índice para pixels NoData (default 255). Class 0 é background
+                           válido e participa de focal e dice normalmente.
             eps:           constante para estabilidade numérica
         """
         super().__init__()
@@ -114,11 +115,14 @@ class FocalDiceLoss(nn.Module):
         B, C, H, W = logits.shape
         device = logits.device
 
-        # Máscara de pixels válidos (exclui ignore_index)
+        # Máscara de pixels válidos (exclui ignore_index e qualquer índice fora de [0, C))
         if self.ignore_index >= 0:
             valid_mask = (targets != self.ignore_index)          # [B,H,W]  bool
         else:
             valid_mask = torch.ones_like(targets, dtype=torch.bool)
+        # Defesa: pixels com valor fora de [0, C) são tratados como ignore.
+        # Protege contra máscaras com classes residuais quando num_classes muda.
+        valid_mask = valid_mask & (targets >= 0) & (targets < C)
 
         # Clamp para evitar índice inválido no one_hot (substitui ignore por 0 temporariamente)
         targets_clamped = targets.clone()
@@ -138,20 +142,24 @@ class FocalDiceLoss(nn.Module):
         focal_per_pixel = -alpha_factor * ((1 - pt) ** self.gamma) * log_pt  # [B,H,W]
         focal_loss = (focal_per_pixel * valid_mask).sum() / (valid_mask.sum().clamp(min=1))
 
-        # ==== DICE LOSS (apenas classes != ignore_index) ====
-        # Zera pixels ignorados antes de calcular interseção
+        # ==== DICE LOSS (sobre todas as classes válidas, ponderada por class_weights) ====
+        # Zera pixels NoData antes da interseção. Background (class 0) é válido.
         valid_mask_c = valid_mask.unsqueeze(1).float()           # [B,1,H,W]
         probs_masked = probs * valid_mask_c
         tgt_masked   = targets_onehot * valid_mask_c
 
-        # Exclui o canal do background do cômputo do Dice
-        start_c = 1 if self.ignore_index == 0 else 0
-        probs_flat = probs_masked[:, start_c:].reshape(B, C - start_c, -1)
-        tgt_flat   = tgt_masked[:,   start_c:].reshape(B, C - start_c, -1)
+        probs_flat = probs_masked.reshape(B, C, -1)
+        tgt_flat   = tgt_masked.reshape(B, C, -1)
 
-        intersection = (probs_flat * tgt_flat).sum(-1)
-        union        = probs_flat.sum(-1) + tgt_flat.sum(-1)
-        dice_loss    = (1 - (2 * intersection + self.eps) / (union + self.eps)).mean()
+        intersection = (probs_flat * tgt_flat).sum(-1)           # [B, C]
+        union        = probs_flat.sum(-1) + tgt_flat.sum(-1)     # [B, C]
+        dice_per_class = 1 - (2 * intersection + self.eps) / (union + self.eps)  # [B, C]
+
+        # Pondera Dice pelas class_weights — sem isso classes raras pesam o mesmo
+        # que classes dominantes na média, e a Dice fica dominada pelo background.
+        w = alpha.view(1, C)                                      # [1, C]
+        dice_loss = (dice_per_class * w).sum(dim=1) / w.sum().clamp(min=self.eps)
+        dice_loss = dice_loss.mean()
 
         return self.focal_weight * focal_loss + self.dice_weight * dice_loss
 
